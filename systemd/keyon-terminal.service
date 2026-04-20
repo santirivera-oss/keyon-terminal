@@ -1,0 +1,27 @@
+[Unit]
+Description=KEYON Terminal Pro v2 - Face Recognition Kiosk
+Documentation=https://github.com/santirivera-oss/keyon-terminal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=keyon
+Group=keyon
+WorkingDirectory=/home/keyon/keyon-terminal
+ExecStart=/usr/bin/python3 /home/keyon/keyon-terminal/scripts/terminal_main.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=keyon-terminal
+
+# Esperar que la camara USB este lista
+ExecStartPre=/bin/sleep 15
+
+# Limites de seguridad
+MemoryMax=400M
+CPUQuota=90%
+
+[Install]
+WantedBy=multi-user.target
