@@ -1,0 +1,48 @@
+# === Credenciales sensibles - NO subir a Git ===
+firebase-credentials.json
+*.key
+*.pem
+*_credentials.json
+*_secret*
+
+# === Base de datos local con datos biométricos ===
+db/*.db
+db/*.db-journal
+db/*.sqlite
+db/*.sqlite3
+
+# === Python cache ===
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# === Entornos virtuales ===
+venv/
+env/
+.venv/
+
+# === Archivos temporales ===
+*.log
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# === Outputs de prueba ===
+/tmp/*.jpg
+*_detected.jpg
+*_yunet.jpg
+test*.jpg
+
+# === Editor ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === Sistema ===
+.bash_history
+.python_history
