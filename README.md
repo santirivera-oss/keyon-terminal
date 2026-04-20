@@ -2,6 +2,10 @@
 
 Sistema de reconocimiento facial nativo para control de asistencia escolar, desplegado sobre hardware embebido Raspberry Pi Zero 2W, con integración directa al ecosistema Firebase del proyecto Keyon Access System.
 
+**Versión actual:** v2.0.4-dev  
+**Última actualización:** 19 de abril de 2026  
+**Estado:** Production-ready (auto-start validado con reboot)
+
 ---
 
 ## Tabla de contenidos
@@ -15,6 +19,8 @@ Sistema de reconocimiento facial nativo para control de asistencia escolar, desp
 - [Pipeline de reconocimiento facial](#pipeline-de-reconocimiento-facial)
 - [Modelo de datos](#modelo-de-datos)
 - [Integración con Firebase](#integración-con-firebase)
+- [Monitoreo remoto (heartbeat)](#monitoreo-remoto-heartbeat)
+- [Arranque automático (systemd)](#arranque-automático-systemd)
 - [Scripts disponibles](#scripts-disponibles)
 - [Guía de uso](#guía-de-uso)
 - [Métricas validadas](#métricas-validadas)
@@ -34,9 +40,19 @@ La terminal opera como unidad independiente con:
 - Detección y reconocimiento facial locales (sin dependencia de servidor externo)
 - Base de datos local SQLite para descriptores faciales
 - Sincronización de registros de asistencia al Firestore compartido con el sistema web
-- Arquitectura lista para integrarse con el módulo ESP32 v8.3 PIR legado (pantalla TFT + sensores PIR + VL53L0X + buzzer)
+- Monitoreo remoto vía heartbeat a Firestore cada 5 minutos
+- Arranque automático al bootear vía systemd service
+- Auto-recuperación ante crashes (restart on failure)
+- Logs estructurados con rotación diaria (30 días de retención)
 
-El sistema fue validado funcionalmente el 19 de abril de 2026 con registro end-to-end completo: captura de frame → detección YuNet → alineación facial → embedding 128-dim SFace → búsqueda en BD local → escritura de registro en Firebase Firestore con timestamp de servidor Google.
+El sistema fue validado funcionalmente el **19 de abril de 2026** con registro end-to-end completo y posteriormente hardening de production-grade con systemd auto-start validado post-reboot.
+
+**Hitos clave:**
+- `21:11:39` - Primer documento escrito a producción (doc id: `Cc5sleYZoGK3J8w39xBo`)
+- `21:22:00` - Badge "Terminal" validado en panel admin web (v3.15.4)
+- `23:29:05` - Primer heartbeat a `terminal_status` validado
+- `23:40:40` - Auto-start via systemd validado post-reboot (49s boot → operativa)
+- `00:XX:00` - Panel "Terminales" deployed en web (v3.15.5)
 
 ---
 
@@ -51,6 +67,7 @@ Keyon es un sistema integral de control de asistencia escolar con biometría fac
 - **Cloud Functions** desplegadas en `us-central1` — notificaciones y lógica serverless
 - **Módulo ESP32 v8.3 PIR** — sensores PIR + VL53L0X + buzzer + pantalla TFT ILI9341 con comunicación WebSocket
 - **Cumplimiento LFPDPPP completo (Bloque A)** — cifrado AES-GCM-256 + PBKDF2 150,000 iteraciones, aviso integral de privacidad, derechos ARCO
+- **Panel admin "Terminales"** (v3.15.5) — monitoreo en tiempo real de terminales físicas conectadas
 
 ### Registro oficial
 
@@ -58,17 +75,8 @@ Keyon es un sistema integral de control de asistencia escolar con biometría fac
 - **Categoría:** Alumno-Tecnológico
 - **Plantel:** CBTis No. 001, Fresnillo, Zacatecas
 - **Fase:** Nacional (1er lugar estatal CNPyPE 2026)
-- **Repositorio web:** [github.com/santirivera-oss/SCANER-V3](https://github.com/santirivera-oss/SCANER-V3)
-
-### Motivación de Terminal Pro v2
-
-La versión web original requiere una PC con navegador en cada kiosco, lo cual implica:
-- Mayor costo de hardware (~$4,900 MXN por kiosco PC + periféricos)
-- Mayor consumo energético
-- Requiere administración de sistema operativo completo
-- Dependencia de Chromium con face-api.js limitado a ~1.2 segundos por reconocimiento
-
-Terminal Pro v2 reduce el costo a ~$2,670 MXN por unidad, opera en 5V 3A, ejecuta Debian Lite sin escritorio gráfico, y usa modelos ONNX cuantizados para inferencia directa sobre CPU ARM, eliminando la capa de navegador y JavaScript.
+- **Repositorio terminal:** [github.com/santirivera-oss/keyon-terminal](https://github.com/santirivera-oss/keyon-terminal) (público)
+- **Repositorio web:** [github.com/santirivera-oss/SCANER-V3](https://github.com/santirivera-oss/SCANER-V3) (privado)
 
 ---
 
@@ -80,12 +88,16 @@ Terminal Pro v2 reduce el costo a ~$2,670 MXN por unidad, opera en 5V 3A, ejecut
 │                                                              │
 │  ┌─────────────────┐              ┌──────────────────────┐   │
 │  │  Sistema Web    │              │  Terminal Pro v2     │   │
-│  │  v3.12.0        │              │  (este proyecto)     │   │
+│  │  v3.15.5        │              │  v2.0.4-dev          │   │
 │  │                 │              │                      │   │
 │  │  React+TS+PWA   │              │  Python+OpenCV       │   │
-│  │  Firebase Hosting│              │  YuNet + SFace       │   │
+│  │  Firebase Host  │              │  YuNet + SFace       │   │
 │  │  Chromium       │              │  SQLite local        │   │
-│  │  face-api.js    │              │  ARM Cortex-A53      │   │
+│  │  face-api.js    │              │  systemd auto-start  │   │
+│  │                 │              │  Heartbeat 5min      │   │
+│  │  Panel admin    │◀──────▶────▶│                      │   │
+│  │  + vista        │              │                      │   │
+│  │  "Terminales"   │              │                      │   │
 │  └────────┬────────┘              └───────────┬──────────┘   │
 │           │                                    │              │
 │           └──────────────┬─────────────────────┘              │
@@ -95,45 +107,33 @@ Terminal Pro v2 reduce el costo a ~$2,670 MXN por unidad, opera en 5V 3A, ejecut
 │           │  Firebase Firestore      │                        │
 │           │  (scanner-v3)            │                        │
 │           │                          │                        │
-│           │  43 colecciones:         │                        │
+│           │  44 colecciones:         │                        │
 │           │  - alumnos               │                        │
-│           │  - asistencias           │                        │
-│           │  - asistencias_terminal  │  ← colección nueva    │
-│           │  - biometricos_seguros   │    para Terminal v2   │
+│           │  - ingresos_cbtis        │  ← escriben ambos    │
+│           │  - terminal_status       │  ← solo Pi            │
+│           │  - biometricos_seguros   │                        │
 │           │  - consentimientos       │                        │
 │           │  - ... (40 más)          │                        │
 │           └──────────────────────────┘                        │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-### Flujo de datos en Terminal Pro v2
+### Flujo completo en producción
 
 ```
-[1] Cámara Logitech C270 captura frame 640x480 YUY2 @ 30 fps
-                    │
-                    ▼
-[2] YuNet ONNX detecta rostros con bounding boxes + 5 landmarks
-                    │
-                    ▼
-[3] SFace.alignCrop alinea el rostro usando los landmarks
-                    │
-                    ▼
-[4] SFace.feature genera embedding 128-dim (float32, 512 bytes)
-                    │
-                    ▼
-[5] SQLite query recupera todos los embeddings registrados
-                    │
-                    ▼
-[6] Comparación coseno + L2 vs cada embedding registrado
-                    │
-                    ▼
-[7] Selección del match más confiable superando umbrales
-                    │
-                    ▼
-[8] Registro de asistencia en SQLite local (fallback offline)
-                    │
-                    ▼
-[9] Sincronización inmediata con Firestore asistencias_terminal
+BOOT → SYSTEMD → PYTHON → FIREBASE ─┬─► HEARTBEAT cada 5min
+                                     │   (terminal_status)
+                                     │
+                                     └─► LOOP PRINCIPAL
+                                         │
+                                         ├─► Captura (ffmpeg/C270)
+                                         ├─► Detección (YuNet ONNX)
+                                         ├─► Alineación + Embedding (SFace)
+                                         ├─► Match contra SQLite local
+                                         └─► Si match válido:
+                                             ├─► Registro local SQLite
+                                             └─► Escribe ingresos_cbtis
+                                                 (+ anti-duplicados 60s)
 ```
 
 ---
@@ -146,39 +146,43 @@ Terminal Pro v2 reduce el costo a ~$2,670 MXN por unidad, opera en 5V 3A, ejecut
 - **Procesador:** Broadcom BCM2710A1, núcleo ARM Cortex-A53 quad-core @ 1 GHz (ARMv8, 64-bit)
 - **RAM:** 512MB LPDDR2 SDRAM (416 MB efectivos disponibles tras reserva GPU)
 - **Memoria swap:** 415 MB auxiliar en microSD
-- **Almacenamiento:** microSD ADATA Premier 128GB UHS-I V10 A1 (114 GB útiles tras formateo)
+- **Almacenamiento:** microSD ADATA Premier 128GB UHS-I V10 A1 (114 GB útiles tras formateo, ~105 GB libres en uso)
 - **Conectividad:** WiFi 802.11 b/g/n 2.4 GHz + Bluetooth 4.2/BLE
 - **Interfaces activas:** SPI (`/dev/spidev0.0`, `/dev/spidev0.1`), I2C (`/dev/i2c-1`, `/dev/i2c-2`)
-- **Temperatura en idle:** 47.2 °C (dentro del rango óptimo, umbral throttling a 80 °C)
-- **Voltaje del núcleo:** 1.2563 V (nominal y estable)
+- **Consumo en operación:** ~2-3W
+- **Temperatura típica:** 42-48°C idle, 50-55°C bajo carga continua (umbral throttling a 80°C)
 
-### Periféricos
+### Periféricos actuales
 
-- **Cámara:** Logitech C270 HD Webcam (VID 046d, PID 0825) vía cable OTG Soku V8 Micro USB → USB 3.0
+- **Cámara:** Logitech C270 HD Webcam (VID 046d, PID 0825) vía cable OTG Soku V8 Micro USB
   - Resolución usada: 640x480 YUYV @ 30 fps
-  - Resoluciones soportadas: hasta 1280x720 @ 15 fps
-- **Pantalla (opcional):** 3.5" SPI ILI9486 480x320 táctil
-- **Audio:** 2x módulos amplificadores PAM8403 2x3W + 2x bocinas 50mm 4Ω 3W metálicas
+  - Detección automática por driver UVC estándar Linux
 - **Fuente de poder:** Tecneu 5V 3A con botón ON/OFF
+
+### Periféricos pendientes (en proceso)
+
+- **Pantalla:** 3.5" SPI ILI9486 480x320 táctil (pendiente soldar headers)
+- **Audio:** 2x PAM8403 + 2x bocinas 50mm 4Ω (pendiente soldar headers)
+- **Headers GPIO:** compra pendiente Steren Fresnillo
 
 ### Presupuesto de hardware
 
-| Componente | Costo (MXN) |
-|---|---|
-| Raspberry Pi Zero 2W | 806.44 |
-| Fuente 5V 3A Tecneu | 139.56 |
-| microSD ADATA 128GB | 378.00 |
-| Cámara Logitech C270 | 486.00 |
-| Pantalla SPI 3.5" ILI9486 | 474.05 |
-| Cable OTG Soku V8 | 159.99 |
-| 2x PAM8403 | 84.36 |
-| 2x Bocinas 50mm 4Ω | 141.55 |
-| **Total hardware** | **2,669.95** |
-| Headers 40 pines (pendiente) | ~35.00 |
-| Adaptador mini-HDMI (pendiente) | ~120.00 |
-| Cautín/estaño (prestado CBTis) | 0.00 |
-| Case 3D impreso (pendiente) | ~400.00 |
-| **Total proyectado** | **~3,225.00** |
+| Componente | Costo (MXN) | Estado |
+|---|---|---|
+| Raspberry Pi Zero 2W | 806.44 | ✅ En uso |
+| Fuente 5V 3A Tecneu | 139.56 | ✅ En uso |
+| microSD ADATA 128GB | 378.00 | ✅ En uso |
+| Cámara Logitech C270 | 486.00 | ✅ En uso |
+| Pantalla SPI 3.5" ILI9486 | 474.05 | ⏳ Pendiente headers |
+| Cable OTG Soku V8 | 159.99 | ✅ En uso |
+| 2x PAM8403 | 84.36 | ⏳ Pendiente headers |
+| 2x Bocinas 50mm 4Ω | 141.55 | ⏳ Pendiente headers |
+| **Subtotal hardware** | **2,669.95** | |
+| Headers 40 pines (Steren) | ~35.00 | 🔜 Lunes |
+| Adaptador mini-HDMI (Steren) | ~120.00 | 🔜 Lunes |
+| Cautín/estaño (prestado CBTis) | 0.00 | 🔜 Lunes |
+| Case 3D impreso | ~400.00 | 🔜 Semana |
+| **Total proyectado** | **~3,225.00** | |
 
 ### Comparativo con soluciones comerciales
 
@@ -197,83 +201,83 @@ Terminal Pro v2 reduce el costo a ~$2,670 MXN por unidad, opera en 5V 3A, ejecut
 - **Debian GNU/Linux 13 "Trixie"** (rama estable 2025-2026)
 - **Kernel:** Linux 6.12.75+rpt-rpi-v8 (marzo 2026)
 - **Arquitectura:** aarch64 (ARM64)
-- **Shell:** bash 5.x
-- **Gestor de servicios:** systemd
+- **Gestor de servicios:** systemd (con auto-start de `keyon-terminal.service`)
 
 ### Runtime y librerías Python
 
 - **Python 3.13.5** (pre-instalado en Raspberry Pi OS Lite)
 - **pip3** 25.1.1
-- **numpy** 2.4.4 (cálculo vectorial)
-- **opencv-python-headless** 4.13.0.92 (visión por computadora sin GUI)
-- **firebase-admin** 7.4.0 (SDK oficial Firebase)
-- **google-cloud-firestore** 2.27.0 (cliente Firestore)
-- **sqlite3** (biblioteca estándar Python + CLI 3.46.1)
+- **numpy** 2.4.4
+- **opencv-python-headless** 4.13.0.92
+- **firebase-admin** 7.4.0
+- **google-cloud-firestore** 2.27.0
+- **sqlite3** 3.46.1 (CLI + biblioteca estándar Python)
 
 ### Modelos de inteligencia artificial
 
 - **Detección:** YuNet `face_detection_yunet_2023mar.onnx`
-  - Fuente: [OpenCV Model Zoo](https://github.com/opencv/opencv_zoo) (oficial)
+  - Fuente: OpenCV Model Zoo oficial
   - Arquitectura: MobileNetV2 cuantizada
   - Tamaño: 228 KB
-  - Entrada: RGB 640x480 (redimensionable)
-  - Salida: bounding boxes + 5 landmarks faciales + score de confianza
+  - Precisión validada: 92-95% confianza en rostros frontales
 
 - **Reconocimiento:** SFace `face_recognition_sface_2021dec.onnx`
-  - Fuente: [OpenCV Model Zoo](https://github.com/opencv/opencv_zoo) (oficial)
+  - Fuente: OpenCV Model Zoo oficial
   - Arquitectura: ResNet-50 optimizada
   - Tamaño: 37 MB
-  - Entrada: rostro alineado 112x112 RGB
-  - Salida: embedding 128-dim float32 (512 bytes)
+  - Output: embedding 128-dim float32 (512 bytes)
 
-### Herramientas de desarrollo
+### Herramientas
 
-- **Git** 2.47.3 — control de versiones
-- **tmux** 3.5a — sesiones persistentes (planeado)
-- **nano** — editor de texto
-- **ffmpeg** 7.1.3 — captura de video/imagen desde cámara
-- **v4l-utils** — diagnóstico de Video4Linux2
-- **sqlite3** CLI — consulta directa a BD
+- **Git** 2.47.3
+- **tmux** 3.5a
+- **ffmpeg** 7.1.3
+- **v4l-utils** (diagnóstico cámara)
 
-### Configuración de interfaces
+### DevOps / Production
 
-Configuración activada en `/boot/firmware/config.txt`:
-```
-dtparam=i2c_arm=on
-dtparam=spi=on
-dtparam=audio=on
-```
-
-Módulo `i2c-dev` cargado automáticamente vía `/etc/modules-load.d/i2c.conf`.
+- **systemd service** con auto-start al boot
+- **Restart on failure** con backoff automático
+- **Logs rotativos diarios** (30 días retención)
+- **Límite de memoria** 400MB
+- **Límite de CPU** 90%
+- **Journal de systemd** para logs del servicio
 
 ---
 
 ## Estructura del repositorio
 
 ```
-/home/keyon/keyon-terminal/
-├── README.md                           Este archivo
-├── .gitignore                          Exclusiones de Git
-├── firebase-credentials.json           🔑 Service account (NO subir a Git)
+keyon-terminal/                          github.com/santirivera-oss/keyon-terminal
+├── README.md                            Este archivo (documentación completa)
+├── .gitignore                           Protege credenciales + logs + BD
 │
-├── db/
-│   └── keyon.db                        Base de datos SQLite local
+├── db/                                  [IGNORED] BD SQLite con biométricos
+│   └── keyon.db
+│
+├── logs/                                [IGNORED] Logs rotativos del kiosco
+│   └── kiosco.log
 │
 ├── modelos/
 │   ├── face_detection_yunet_2023mar.onnx
 │   └── face_recognition_sface_2021dec.onnx
 │
-├── docs/                               Documentación adicional (TBD)
+├── systemd/                             Service file para auto-start
+│   └── keyon-terminal.service
+│
+├── docs/                                Documentación adicional (TBD)
 │
 └── scripts/
-    ├── db_init.py                      Inicializar schema de BD
-    ├── deteccion_test.py               Prueba detección con Haar Cascade
-    ├── detectar_yunet.py               Detección moderna con YuNet
-    ├── reconocer_sface.py              Comparación 1:1 entre dos rostros
-    ├── registrar.py                    Registrar alumno en BD local
-    ├── identificar.py                  Identificación 1:N contra BD
-    ├── firebase_test.py                Prueba de conexión a Firestore
-    └── firebase_write.py               Prueba de escritura a Firestore
+    ├── db_init.py                       Inicializar schema de BD
+    ├── deteccion_test.py                Prueba Haar Cascade (legacy)
+    ├── detectar_yunet.py                Detección moderna YuNet
+    ├── reconocer_sface.py               Comparación 1:1 entre rostros
+    ├── registrar.py                     Enroll de alumno
+    ├── identificar.py                   Identificación 1:N
+    ├── firebase_test.py                 Test lectura Firestore
+    ├── firebase_write.py                Test escritura Firestore (legacy)
+    ├── firebase_cleanup_terminal.py     Limpieza de registros test
+    └── terminal_main.py                 🎯 Kiosco loop principal v2.0.3-dev
 ```
 
 ---
@@ -282,15 +286,13 @@ Módulo `i2c-dev` cargado automáticamente vía `/etc/modules-load.d/i2c.conf`.
 
 ### Etapa 1 — Captura de imagen
 
-Usamos ffmpeg vía el driver UVC (USB Video Class) nativo de Linux:
-
 ```bash
 ffmpeg -f v4l2 -video_size 640x480 -i /dev/video0 \
-       -vf "select='eq(n,10)'" \
-       -frames:v 1 -update 1 /tmp/captura.jpg
+       -vf "select='eq(n,5)'" \
+       -frames:v 1 -update 1 -y /tmp/keyon_frame.jpg
 ```
 
-El filtro `select='eq(n,10)'` captura el frame 10 para dar tiempo al sensor de auto-calibrar exposición y balance de blancos (los primeros 5-8 frames en C270 salen subexpuestos).
+El filtro `select='eq(n,5)'` captura el frame 5 para dar tiempo al sensor C270 de auto-calibrar exposición. Timeout robusto de 10 segundos con retry backoff.
 
 ### Etapa 2 — Detección con YuNet
 
@@ -299,18 +301,13 @@ detector = cv2.FaceDetectorYN.create(
     "face_detection_yunet_2023mar.onnx",
     "",
     (640, 480),
-    score_threshold=0.6,    # 60% confianza mínima
-    nms_threshold=0.3,      # Non-Maximum Suppression
-    top_k=5000              # máximo rostros candidatos
+    score_threshold=0.6
 )
 
 _, rostros = detector.detect(imagen)
 ```
 
-Cada rostro detectado incluye:
-- Bounding box (x, y, width, height)
-- 5 landmarks: ojo izquierdo, ojo derecho, punta de la nariz, comisura izquierda de boca, comisura derecha de boca
-- Score de confianza (0.0 a 1.0)
+Retorna bounding boxes + 5 landmarks + confianza por rostro.
 
 ### Etapa 3 — Alineación facial
 
@@ -318,7 +315,7 @@ Cada rostro detectado incluye:
 rostro_alineado = reconocedor.alignCrop(imagen, rostro)
 ```
 
-SFace usa los 5 landmarks para rotar y escalar el rostro a un formato canónico 112x112 RGB, asegurando que los ojos queden horizontales y centrados. Esto normaliza la pose antes del embedding.
+SFace usa los 5 landmarks para rotar y escalar el rostro a formato canónico 112x112 RGB.
 
 ### Etapa 4 — Generación de embedding
 
@@ -327,27 +324,19 @@ embedding = reconocedor.feature(rostro_alineado)
 # embedding.shape == (1, 128), dtype float32, 512 bytes
 ```
 
-El embedding es un vector 128-dimensional que representa las características únicas del rostro en un espacio latente. Dos fotos de la misma persona producen vectores cercanos; dos personas distintas producen vectores alejados.
-
 ### Etapa 5 — Comparación
 
-Dos métricas complementarias:
+**Distancia coseno** (umbral match OpenCV oficial: `> 0.363`)  
+**Distancia L2** (umbral match OpenCV oficial: `< 1.128`)
 
-**Distancia coseno** (más alta = más similar):
-```
-cos(A, B) = (A · B) / (||A|| × ||B||)
-```
-- Rango: -1 a 1 (en la práctica 0 a 1 por normalización de SFace)
-- Umbral match (OpenCV oficial): `> 0.363`
+Doble validación: ambas métricas deben superar umbral simultáneamente.
 
-**Distancia L2** (más baja = más similar):
-```
-L2(A, B) = ||A - B||_2
-```
-- Rango: 0 a ~2 (vectores L2-normalizados)
-- Umbral match (OpenCV oficial): `< 1.128`
+### Etapa 6 — Anti-duplicados
 
-Se considera match válido cuando **ambas** métricas superan sus umbrales simultáneamente. Esta doble validación reduce falsos positivos.
+```python
+if (datetime.now() - ultimo_registro[matricula]).total_seconds() < 60:
+    return "cooldown"  # no registra
+```
 
 ---
 
@@ -355,7 +344,7 @@ Se considera match válido cuando **ambas** métricas superan sus umbrales simul
 
 ### SQLite local (`db/keyon.db`)
 
-**Tabla `alumnos`** — perfiles biométricos registrados en la terminal:
+#### Tabla `alumnos`
 
 ```sql
 CREATE TABLE alumnos (
@@ -367,11 +356,9 @@ CREATE TABLE alumnos (
     fecha_registro TEXT DEFAULT (datetime('now', 'localtime')),
     activo INTEGER DEFAULT 1
 );
-
-CREATE INDEX idx_alumnos_matricula ON alumnos(matricula);
 ```
 
-**Tabla `asistencias`** — log local para operación offline:
+#### Tabla `asistencias`
 
 ```sql
 CREATE TABLE asistencias (
@@ -384,35 +371,70 @@ CREATE TABLE asistencias (
     sincronizado_firebase INTEGER DEFAULT 0,
     FOREIGN KEY (alumno_id) REFERENCES alumnos (id)
 );
-
-CREATE INDEX idx_asistencias_timestamp ON asistencias(timestamp);
-CREATE INDEX idx_asistencias_sync ON asistencias(sincronizado_firebase);
 ```
 
-### Firestore (`scanner-v3`)
+### Firestore (scanner-v3)
 
-**Colección nueva `asistencias_terminal`** — creada por Terminal Pro v2 sin afectar las colecciones del sistema web:
+#### Colección `ingresos_cbtis` (compartida con sistema web)
+
+Schema completo compatible con sistema web v3.15.5, enriquecido con campos específicos de terminal:
 
 ```typescript
 {
-  alumnoId: string,              // ej: "AT2099"
-  nombre: string,                // nombre completo
-  grupo: string,                 // ej: "4BV"
-  tipo: "entrada" | "salida",
-  timestamp: Timestamp,          // hora del servidor Google
-  timestampLocal: string,        // ISO 8601 local
+  // Campos estándar del web
+  tipoPersona: "Alumno",
+  nombre: string,
+  identificador: string,              // matrícula
+  aula: string,
+  grado: string,                      // "4°B"
+  grupo: string,
+  turno: "matutino" | "vespertino",
+  estadoLlegada: "puntual" | "retardo" | "tarde" | null,
+  tipoRegistro: "Ingreso" | "Salida",
+  fecha: "YYYY-MM-DD",
+  hora: "HH:MM:SS",
+  modo: "facial",
+  timestamp: ISO_string,
+  fotoUrl: null,
+  escuela: "CBTis No. 001",
+  
+  // Campos específicos terminal
+  origen: "terminal_pi",              // ⭐ discriminador para badge admin
+  terminalId: string,
+  dispositivo: "Raspberry Pi Zero 2W",
   metodoVerificacion: "facial_local_terminal",
   scoreCosine: number,
   scoreL2: number,
-  terminalId: string,            // ej: "keyon-pi-zero2w-01"
-  dispositivo: string,           // ej: "Raspberry Pi Zero 2W"
-  procesadoEnDispositivo: boolean,
-  sincronizadoFirebase: boolean,
-  version: string                // ej: "2.0.0-dev"
+  procesadoEnDispositivo: true,
+  sincronizadoFirebase: true,
+  versionTerminal: "2.0.3-dev"
 }
 ```
 
-Esta colección separada permite al panel administrativo web distinguir entre registros generados por el sistema web (face-api.js en browser) y registros del kiosco físico (SFace nativo en Pi), manteniendo trazabilidad completa.
+#### Colección `terminal_status` (creada para v2)
+
+Heartbeat/estado de terminales conectadas. Un documento por terminal (doc.id = terminalId):
+
+```typescript
+{
+  terminalId: string,                  // ej "keyon-pi-zero2w-01"
+  dispositivo: string,
+  estado: "online" | "offline",
+  ultimoHeartbeat: Timestamp,          // server Google
+  ultimoHeartbeatLocal: string,        // ISO 8601
+  temperaturaCpu: number,              // celsius
+  uptimeSegundos: number,
+  totalRegistrosHoy: number,
+  totalRegistrosSesion: number,
+  versionTerminal: string,
+  conectadoDesde: string,
+  escuela: string,
+  ip: string,
+  ramUsadaMB: number,
+  espacioDiscoLibreGB: number,
+  origen: "terminal_pi"
+}
+```
 
 ---
 
@@ -420,335 +442,468 @@ Esta colección separada permite al panel administrativo web distinguir entre re
 
 ### Autenticación
 
-La Terminal Pro v2 usa un **service account** con credenciales descargadas de Firebase Console (Project Settings → Service accounts → Generate new private key). El archivo JSON resultante se coloca en `/home/keyon/keyon-terminal/firebase-credentials.json` con permisos `600` (solo lectura para el owner).
-
-### Cliente Firestore
+Service Account con credenciales en `firebase-credentials.json` (chmod 600, en `.gitignore`).
 
 ```python
-import firebase_admin
-from firebase_admin import credentials, firestore
-
 cred = credentials.Certificate("firebase-credentials.json")
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 ```
 
-### Proyecto Firebase
+### Escritura a producción
 
-- **Project ID:** `scanner-v3`
-- **Región:** `us-central1`
-- **43 colecciones totales**
-- **10 alumnos registrados** (al momento de validación)
+La terminal usa `.add()` para ID auto-generado (compatible con el web):
 
-### Colecciones detectadas
+```python
+_, doc_ref = db.collection("ingresos_cbtis").add(doc)
+```
+
+### Coordinación con sistema web
+
+- **Sistema web** escribe a `ingresos_cbtis` con `modo: "facial"` o `"qr"` desde face-api.js/TOTP
+- **Terminal Pi** escribe a `ingresos_cbtis` con `origen: "terminal_pi"` desde OpenCV/SFace
+- **Panel admin** (v3.15.5) distingue ambos con badge "Terminal" cyan cuando `origen === "terminal_pi"`
+
+### Rules Firestore
+
+El service account (Admin SDK) bypasea reglas por diseño. No se requirieron cambios.
+
+---
+
+## Monitoreo remoto (heartbeat)
+
+### Funcionamiento
+
+La terminal escribe al documento `terminal_status/{terminalId}` cada 5 minutos (300s) durante operación normal.
+
+Al iniciar: `estado = "online"` + heartbeat inmediato.  
+Al detener (Ctrl+C o shutdown): `estado = "offline"`.  
+Si crash abrupto: documento queda `"online"` con `ultimoHeartbeat` viejo → detectable como "stale" si >10min.
+
+### Información reportada
+
+- Temperatura CPU en tiempo real
+- RAM utilizada
+- Espacio disco libre
+- Uptime del dispositivo
+- IP local
+- Total registros del día
+- Total registros de la sesión
+- Versión del software
+
+### Panel admin "Terminales" (v3.15.5)
+
+El sistema web tiene una sección dedicada:
+
+- **Ruta:** Sidebar → Sistema → Terminales
+- **Badge:** "Pi" en cyan junto al menú item
+- **Roles autorizados:** admin, superadmin
+- **Visualización:** lista de terminales con badge de estado (verde/rojo/amarillo), métricas en vivo, auto-refresh
+
+---
+
+## Arranque automático (systemd)
+
+### Service file (`/etc/systemd/system/keyon-terminal.service`)
+
+```ini
+[Unit]
+Description=KEYON Terminal Pro v2 - Face Recognition Kiosk
+Documentation=https://github.com/santirivera-oss/keyon-terminal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=keyon
+Group=keyon
+WorkingDirectory=/home/keyon/keyon-terminal
+ExecStart=/usr/bin/python3 /home/keyon/keyon-terminal/scripts/terminal_main.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=keyon-terminal
+ExecStartPre=/bin/sleep 15
+MemoryMax=400M
+CPUQuota=90%
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Características
+
+- **After=network-online.target** — espera WiFi antes de arrancar
+- **ExecStartPre sleep 15** — da tiempo a cámara USB para inicializar
+- **Restart=on-failure** — si Python crashea, reinicia automático
+- **RestartSec=10** — espera 10s entre intentos de restart
+- **MemoryMax=400M** — protección contra memory leaks
+- **CPUQuota=90%** — deja 10% al sistema
+
+### Comandos útiles
+
+```bash
+# Ver estado
+sudo systemctl status keyon-terminal.service
+
+# Ver logs en vivo
+sudo journalctl -u keyon-terminal.service -f
+
+# Reiniciar servicio
+sudo systemctl restart keyon-terminal.service
+
+# Detener (no deshabilita auto-start)
+sudo systemctl stop keyon-terminal.service
+
+# Deshabilitar auto-start al boot
+sudo systemctl disable keyon-terminal.service
+
+# Habilitar auto-start al boot
+sudo systemctl enable keyon-terminal.service
+```
+
+### Validación post-reboot
+
+**Test del 19 abril 23:40 CST:**
 
 ```
-_admin_logs, _config, _security_logs, _system,
-admin_logs, admin_profiles, alumnos, asignaciones,
-asistencias, asistencias_terminal (nueva), avisos,
-biometric_access_logs, biometricos_seguros, calificaciones,
-chats, chats_padres, citatorios, clases_profesor,
-consent_codes, consent_logs, consent_pending, consentimientos,
-datos_biometricos, directivos, entregas, faltas_por_retardos,
-historial, horarios, ingresos_cbtis, justificantes,
-logs_facial, notificaciones, notificaciones_enviadas,
-padres_codigos, padres_tokens, pases_salida, profesores,
-registros, reportes, reportes_disciplina, security_logs,
-sesiones, tareas, usuarios
+23:40:24  systemd.start (reboot completado)
+23:40:40  service.Started
+23:40:59  Python arranca (tras sleep 15s)
+23:41:01  Modelos YuNet + SFace cargados
+23:41:02  Firebase conectado
+23:41:03  Heartbeat inicial enviado
+23:41:13  PRIMER REGISTRO tras reboot sin intervención
+
+Tiempo total boot → operativa: 49 segundos
 ```
 
 ---
 
 ## Scripts disponibles
 
-### `db_init.py`
+### Flujo del kiosco
 
-Inicializa el schema de la base de datos SQLite. Crea las tablas `alumnos` y `asistencias` con sus índices correspondientes.
+- **`terminal_main.py`** — Loop principal del kiosco (v2.0.3-dev)
+  - Flags: `--dry-run` (sin Firebase), `--debug` (verboso)
+  - Se ejecuta vía systemd en producción
 
-```bash
-python3 scripts/db_init.py
-```
+### Enroll / registro
 
-Si la BD ya existe, pregunta confirmación antes de borrarla.
+- **`db_init.py`** — Inicializa schema de BD
+- **`registrar.py`** — Registra alumno con foto
 
-### `registrar.py`
+### Identificación
 
-Registra un nuevo alumno en la BD local extrayendo su embedding facial desde una foto.
+- **`identificar.py`** — Identificación 1:N contra BD local
+- **`reconocer_sface.py`** — Comparación 1:1 entre dos rostros
 
-```bash
-python3 scripts/registrar.py <ruta_foto> <nombre> <grupo> [matricula]
-```
+### Detección (testing)
 
-Ejemplo:
-```bash
-python3 scripts/registrar.py /tmp/foto1.jpg "Santiago Rivera" "4BV" "AT2099"
-```
+- **`detectar_yunet.py`** — Prueba detección moderna
+- **`deteccion_test.py`** — Prueba Haar Cascade (legacy)
 
-Alerta si la confianza de detección es menor al 85% y pide confirmación.
+### Firebase
 
-### `identificar.py`
-
-Identifica a un alumno 1:N contra toda la BD local y retorna el match más confiable.
-
-```bash
-python3 scripts/identificar.py <ruta_foto>
-```
-
-Salida esperada:
-```
-IDENTIFICADO: Santiago Rivera
-Grupo: 4BV | Matricula: AT2099
-Scores: cos=0.7260 | L2=0.7403
-```
-
-### `detectar_yunet.py`
-
-Prueba de detección facial con YuNet. Muestra coordenadas, confianza y landmarks de cada rostro.
-
-### `reconocer_sface.py`
-
-Compara 1:1 entre dos fotos y dicta si son la misma persona.
-
-```bash
-python3 scripts/reconocer_sface.py /tmp/foto1.jpg /tmp/foto2.jpg
-```
-
-### `firebase_test.py`
-
-Verifica conectividad con Firebase, lista todas las colecciones del proyecto y muestra una muestra de 5 alumnos del Firestore.
-
-### `firebase_write.py`
-
-Escribe un documento de prueba en la colección `asistencias_terminal` y lo relee para validar la escritura.
-
-### `deteccion_test.py`
-
-Detección legacy con Haar Cascade (solo como referencia histórica de lo primero que funcionó). YuNet lo supera en precisión.
+- **`firebase_test.py`** — Test lectura Firestore
+- **`firebase_write.py`** — Test escritura (legacy, usar terminal_main.py)
+- **`firebase_cleanup_terminal.py`** — Limpia registros de prueba con `--delete`
 
 ---
 
 ## Guía de uso
 
-### Primer setup en una Pi nueva
-
-1. **Flashear Raspberry Pi OS Lite 64-bit** usando Raspberry Pi Imager con personalización:
-   - Hostname, usuario, password configurados
-   - SSH activado con autenticación por contraseña
-   - WiFi pre-configurado
-
-2. **Actualizar sistema:**
-   ```bash
-   sudo apt update && sudo apt upgrade -y
-   ```
-
-3. **Activar SPI e I2C** vía `sudo raspi-config` → Interface Options → SPI/I2C → Enable.
-
-4. **Instalar dependencias:**
-   ```bash
-   sudo apt install -y git python3-pip ffmpeg v4l-utils sqlite3
-   pip3 install opencv-python-headless numpy firebase-admin --break-system-packages
-   ```
-
-5. **Clonar el proyecto:**
-   ```bash
-   git clone https://github.com/santirivera-oss/keyon-terminal.git ~/keyon-terminal
-   cd ~/keyon-terminal
-   ```
-
-6. **Descargar modelos ONNX:**
-   ```bash
-   cd modelos
-   wget https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
-   wget https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx
-   ```
-
-7. **Configurar credenciales Firebase:**
-   - Descargar service account JSON de Firebase Console
-   - Copiarlo a `~/keyon-terminal/firebase-credentials.json`
-   - `chmod 600 firebase-credentials.json`
-
-8. **Inicializar BD:**
-   ```bash
-   python3 scripts/db_init.py
-   ```
-
-### Flujo típico de uso
+### Setup inicial en una Pi nueva
 
 ```bash
-# Registrar alumno
-python3 scripts/registrar.py /tmp/alumno1.jpg "Juan Pérez" "4BV" "AT0001"
+# 1. Flashear Raspberry Pi OS Lite 64-bit con SSH + WiFi pre-configurado
 
-# Identificar alumno (captura nueva foto primero)
-ffmpeg -f v4l2 -video_size 640x480 -i /dev/video0 -frames:v 1 -update 1 -y /tmp/nueva.jpg
-python3 scripts/identificar.py /tmp/nueva.jpg
+# 2. Actualizar
+sudo apt update && sudo apt upgrade -y
+
+# 3. Activar SPI e I2C
+sudo raspi-config  # Interface Options → SPI/I2C → Enable
+
+# 4. Instalar dependencias
+sudo apt install -y git python3-pip ffmpeg v4l-utils sqlite3
+pip3 install opencv-python-headless numpy firebase-admin --break-system-packages
+
+# 5. Clonar proyecto
+git clone https://github.com/santirivera-oss/keyon-terminal.git ~/keyon-terminal
+cd ~/keyon-terminal
+
+# 6. Credenciales Firebase (copiar manualmente a ~/keyon-terminal/)
+chmod 600 firebase-credentials.json
+
+# 7. Inicializar BD
+python3 scripts/db_init.py
+
+# 8. Configurar systemd auto-start
+sudo cp systemd/keyon-terminal.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable keyon-terminal.service
+sudo systemctl start keyon-terminal.service
+
+# 9. Verificar
+sudo systemctl status keyon-terminal.service
+```
+
+### Registro de alumnos
+
+```bash
+# Capturar foto
+ffmpeg -f v4l2 -video_size 640x480 -i /dev/video0 -frames:v 1 -y /tmp/alumno.jpg
+
+# Registrar
+python3 scripts/registrar.py /tmp/alumno.jpg "Juan Pérez" "4BV" "AT0001"
+```
+
+### Apagar/Encender la Pi correctamente
+
+```bash
+# Apagar (shutdown limpio)
+sudo poweroff
+
+# Esperar a que LED verde se apague y quede solo el rojo
+# Ya puedes desconectar cable de corriente
+
+# Encender
+# Reconectar cable. Arranque automático en ~90 segundos.
+```
+
+### Monitoreo
+
+```bash
+# Logs en tiempo real
+sudo journalctl -u keyon-terminal.service -f
+
+# Logs del archivo
+tail -f ~/keyon-terminal/logs/kiosco.log
+
+# Status del servicio
+sudo systemctl status keyon-terminal.service
+
+# Ver heartbeat en Firebase
+# https://console.firebase.google.com/project/scanner-v3/firestore/data/~2Fterminal_status
 ```
 
 ---
 
 ## Métricas validadas
 
-### Validación 19 abril 2026
+### Validación del 19 de abril de 2026
 
 | Métrica | Valor | Umbral de referencia |
 |---|---|---|
 | Detección YuNet — confianza | 92-95% | mínimo 60% |
-| Reconocimiento SFace — coseno | 0.7260 | mínimo 0.363 |
-| Reconocimiento SFace — L2 | 0.7403 | máximo 1.128 |
-| Latencia captura ffmpeg | ~2.1 s | n/a |
-| Latencia inferencia YuNet + SFace | <1 s | n/a |
+| Reconocimiento SFace — coseno | 0.722-0.834 | >0.363 (umbral match) |
+| Reconocimiento SFace — L2 | 0.577-0.752 | <1.128 (umbral match) |
+| Latencia captura ffmpeg (warm-up) | ~2-6 s | primera captura |
+| Latencia captura (en operación) | 0.5-1 s | tras warm-up |
+| Latencia inferencia + match | 2-3 s | n/a |
+| Latencia end-to-end | ~3-5 s | aceptable para kiosco |
 | Latencia escritura Firestore | ~500 ms | n/a |
-| **Latencia end-to-end** | **~3 s** | comparable a face-api.js web |
-| Temperatura CPU en idle | 47.2 °C | throttling a 80 °C |
-| RAM usada durante inferencia | ~200 MB | 416 MB disponibles |
+| Boot a operativa (post-reboot) | 49 s | objetivo <2min |
+| Temperatura CPU idle | 40-45 °C | throttling a 80 °C |
+| Temperatura CPU en carga | 50-55 °C | margen amplio |
+| RAM usada en operación | ~225 MB | de 416 disponibles |
 | Voltaje del núcleo | 1.2563 V | nominal 1.2-1.3 V |
+| Espacio disco libre | 105 GB | de 114 totales |
+
+### Scores históricos récord
+
+- **Máximo coseno de sesión:** 0.834 (19 abril, 21:11:33)
+- **Mínimo L2 de sesión:** 0.577
+- **Promedio coseno:** ~0.76
+- **Promedio L2:** ~0.68
 
 ### Comparativa con sistema web v1
 
 | Métrica | Sistema web v1 (face-api.js) | Terminal v2 (SFace nativo) |
 |---|---|---|
 | Precisión | 98.5% | ~99% (benchmark LFW) |
-| Latencia | 1.2 s | ~3 s |
+| Latencia | 1.2 s | ~3-5 s |
 | Costo hardware | ~$4,900 | ~$3,225 |
 | Consumo | ~50-100 W (PC) | ~2-5 W (Pi Zero 2W) |
-| Independencia | requiere navegador | autónoma |
-
-Nota: la mayor latencia de Terminal v2 (3s vs 1.2s) se compensa con menor costo, menor consumo y autonomía operativa. Es aceptable para el caso de uso (kiosco de entrada, no tiempo real extremo).
+| Autonomía | Requiere navegador + PC | 100% autónoma |
+| Boot time | ~120s (OS + browser) | ~90s (OS + systemd service) |
 
 ---
 
 ## Bitácora de desarrollo
 
-### Sesión del 19 de abril de 2026
+### Sesión única del 19 de abril de 2026
 
-**Duración:** 4 horas y 30 minutos (19:00 – 23:30)
+**Duración total:** 8 horas (19:00 – 00:00)  
+**Horas productivas netas:** ~6.5 horas (descontando cena y baño)
 
-**Objetivo:** Configurar la Raspberry Pi Zero 2W y validar el pipeline completo de reconocimiento facial + integración Firebase.
-
-#### Hitos cronológicos
+#### Fase 1 — Setup base (19:00-23:30)
 
 | Hora | Hito |
 |---|---|
 | 19:00 | microSD ADATA 128GB recibida, Raspberry Pi Imager descargado |
 | 19:45 | Raspberry Pi OS Lite 64-bit flasheado + primer boot exitoso |
-| 20:15 | SSH funcionando vía WiFi (tras resolver problema de SSID del router FiberStore + typo en credencial + conflicto de known_hosts tras re-flasheo) |
-| 20:30 | Sistema actualizado con `apt update && apt upgrade` |
-| 20:45 | Interfaces SPI e I2C activadas (requirió edición manual de `/boot/firmware/config.txt` y módulo `i2c-dev` en `/etc/modules-load.d/`) |
-| 21:00 | ffmpeg + v4l-utils instalados, cámara Logitech C270 identificada en `/dev/video0` |
-| 21:15 | Primera captura de video 640x480 YUYV @ 30 fps exitosa |
-| 21:30 | OpenCV 4.13 + NumPy 2.4 instalados vía pip3 (apt falló por problema con `libxnvctrl0` no aplicable a ARM) |
-| 21:45 | Primera detección facial con Haar Cascade funcionando |
-| 22:00 | Modelos YuNet + SFace descargados del OpenCV Model Zoo oficial |
-| 22:15 | Detección con YuNet funcionando — 94% confianza en rostro principal |
-| 22:30 | Comparación 1:1 SFace funcionando — cos=0.7260, L2=0.7403 (match válido) |
-| 22:45 | Base de datos SQLite inicializada con tablas `alumnos` y `asistencias` |
-| 23:00 | Primer alumno registrado (ID=1, "Santiago Rivera", "4BV", "AT2099") |
-| 23:15 | Script `identificar.py` funcional — primera identificación 1:N exitosa |
+| 20:15 | SSH funcionando vía WiFi |
+| 20:45 | Interfaces SPI e I2C activadas (edición manual de `/boot/firmware/config.txt`) |
+| 21:00 | ffmpeg + v4l-utils + Logitech C270 detectada en `/dev/video0` |
+| 21:15 | Primera captura 640x480 YUYV @ 30 fps |
+| 21:30 | OpenCV 4.13 + NumPy 2.4 instalados vía pip3 |
+| 21:45 | Primera detección facial con Haar Cascade |
+| 22:00 | Modelos YuNet + SFace descargados del OpenCV Model Zoo |
+| 22:15 | YuNet detectando rostros con 94% confianza |
+| 22:30 | SFace comparación 1:1 exitosa (cos=0.7260) |
+| 22:45 | SQLite inicializada con tablas alumnos y asistencias |
+| 23:00 | Primer alumno registrado (Santiago Rivera, 4BV, AT2099) |
+| 23:15 | `identificar.py` funcional — primera identificación 1:N exitosa |
 | 23:25 | firebase-admin 7.4.0 instalado, service account configurado |
-| 23:30 | **Primera escritura a Firestore exitosa** — documento en `asistencias_terminal` con timestamp de servidor Google visible en Firebase Console |
+| 23:30 | Primera escritura a Firestore (colección `asistencias_terminal`) |
 
-#### Problemas técnicos resueltos
+#### Pausa cena + baño (23:30-20:45 del día siguiente)
 
-1. **Router WiFi mal configurado** — el SSID tenía un carácter típico incorrecto en el Imager; resuelto re-flasheando.
-2. **SSH host key changed** — tras re-flasheo, la Pi generó nuevas llaves y Windows bloqueó conexión; resuelto con `ssh-keygen -R`.
-3. **Confusión de usuarios** — se crearon dos usuarios entre flasheos (`zero-exara` y `keyon`); clarificado con revisión de capturas del Imager.
-4. **SPI/I2C no activadas automáticamente** — `raspi-config` no descomentó las líneas en `config.txt`; resuelto editando manualmente con nano.
-5. **Módulo i2c-dev no cargaba** — requiere entrada explícita en `/etc/modules-load.d/` en Debian Trixie (sistema moderno); `/etc/modules` está obsoleto.
-6. **apt install falla con libxnvctrl0** — dependencia de NVIDIA no aplicable a ARM; bypass usando pip3 con `opencv-python-headless`.
-7. **Bracketed paste en bash** — códigos de escape `[200~` al pegar comandos; resuelto escribiendo manualmente.
-8. **Nano cortando primera línea** — al pegar código largo a veces se pierde el primer `import`; solución verificar con `head` después de cada edición.
+#### Fase 2 — Integración con sistema web (20:45-21:22)
 
-#### Archivos creados durante la sesión
+| Hora | Hito |
+|---|---|
+| 20:45 | Schema definitivo acordado con Claude Code |
+| 20:55 | v1.2.1 con schema compatible `ingresos_cbtis` |
+| 21:11 | **PRIMER REGISTRO EN PRODUCCIÓN** — doc id `Cc5sleYZoGK3J8w39xBo` |
+| 21:22 | Badge "Terminal" validado en panel admin web v3.15.4 |
 
-- `scripts/deteccion_test.py` — primera prueba Haar
-- `scripts/detectar_yunet.py` — detección moderna
-- `scripts/reconocer_sface.py` — comparación 1:1
-- `scripts/db_init.py` — schema SQLite
-- `scripts/registrar.py` — registro de alumnos
-- `scripts/identificar.py` — identificación 1:N
-- `scripts/firebase_test.py` — test lectura Firebase
-- `scripts/firebase_write.py` — test escritura Firebase
+#### Pausa cena + baño (21:22-22:41)
+
+#### Fase 3 — GitHub + production hardening (22:45-00:00)
+
+| Hora | Hito |
+|---|---|
+| 22:45 | Git config con identidad Santiago Rivera |
+| 23:00 | 3 commits atómicos + push inicial a GitHub |
+| 23:10 | Tag v2.0.1-dev — primer release funcional |
+| 23:17 | v2.0.2-dev — logs a archivo con rotación + errores robustos |
+| 23:29 | v2.0.3-dev — heartbeat a `terminal_status` funcionando |
+| 23:36 | systemd service file creado y validado |
+| 23:40 | **AUTO-START POST-REBOOT VALIDADO** — 49s boot → operativa |
+| 23:45 | v2.0.4-dev con systemd versionado en GitHub |
+| ~00:00 | Claude Code deploya v3.15.5 con panel "Terminales" |
+
+#### Releases publicados en GitHub
+
+| Tag | Descripción | Features |
+|---|---|---|
+| v2.0.1-dev | First functional release | Pipeline básico + Firebase |
+| v2.0.2-dev | File logging + resilience | Logs rotativos, error handling |
+| v2.0.3-dev | Heartbeat monitoring | terminal_status cada 5min |
+| v2.0.4-dev | Systemd auto-start | Service file + reboot-validated |
+
+#### Problemas técnicos resueltos durante el día
+
+1. **WiFi mal configurado en Imager** — SSID typo, resuelto re-flasheando
+2. **SSH host key changed** — tras re-flasheo, resuelto con `ssh-keygen -R`
+3. **SPI/I2C no activadas** por raspi-config — editado manualmente `config.txt`
+4. **Módulo i2c-dev no cargaba** — agregado a `/etc/modules-load.d/`
+5. **apt install falla con libxnvctrl0** — bypass usando pip3 con `opencv-python-headless`
+6. **Bracketed paste en bash** — escribiendo manualmente
+7. **Nano cortando primera línea** — verificación con `head` tras pegados
+8. **Timeout ffmpeg con frame 10** — bajado a frame 5 + timeout 10s
+9. **Schema incorrecto inicial** — Claude Code detectó que web usa `ingresos_cbtis` no `asistencias`
+10. **Repo GitHub con guión inicial** — renombrado desde Settings
+11. **firebase_cleanup.pynano** — archivo basura por typo de nano, eliminado pre-commit
+12. **logs/ no en .gitignore** — agregado antes de primer commit de v2.0.3
 
 ---
 
 ## Consideraciones de seguridad y LFPDPPP
 
-Terminal Pro v2 hereda el modelo de cumplimiento del **Bloque A LFPDPPP** del sistema web principal:
-
-### Artículos cubiertos
+### Artículos cubiertos (heredados del sistema web)
 
 - **Art. 8** — Consentimiento informado previo
 - **Art. 9** — Datos personales sensibles (biométricos) con medidas reforzadas
 - **Art. 16** — Aviso integral de privacidad (10 secciones completas)
 - **Art. 17** — Finalidades primarias y ausencia de secundarias
 - **Art. 19** — Deber de seguridad
-- **Art. 22** — Derechos ARCO (Acceso, Rectificación, Cancelación, Oposición)
+- **Art. 22** — Derechos ARCO
 - **Art. 23** — Trazabilidad y logs inmutables
 
-### Medidas técnicas
+### Medidas técnicas Terminal Pro v2
 
-- **Cifrado en reposo (sistema web):** AES-GCM-256 con PBKDF2 150,000 iteraciones SHA-256
-- **Cifrado en tránsito:** TLS 1.2+ en todas las conexiones a Firebase (enforced por Google)
-- **Permisos de archivos:** `chmod 600` en credenciales y BD local
-- **Service account restrictivo:** solo puede escribir a `asistencias_terminal`, no accede a biométricos cifrados
-- **Logs inmutables:** rules de Firestore impiden update/delete de entradas históricas
-- **Retención:** 180 días post-baja académica (heredado del sistema web)
+- **BD local:** Permisos `chmod 600` en `keyon.db` (solo usuario `keyon`)
+- **Credenciales:** Permisos `chmod 600` en `firebase-credentials.json`
+- **Exclusión de Git:** `.gitignore` protege todo dato sensible
+- **HTTPS/TLS:** Conexión a Firebase vía TLS 1.2+ (Google enforced)
+- **Service account restrictivo:** Solo escribe a `ingresos_cbtis` y `terminal_status`
+- **Logs persistentes:** Rotación diaria con 30 días de retención (auditoría)
+- **Systemd sandboxing:** Límites de memoria (400MB) y CPU (90%)
 
-### Roadmap LFPDPPP para Terminal v2 (pendiente)
+### Pendientes para Bloque B (post-nacional)
 
-- Implementar descifrado AES-256 del `biometricos_seguros` del web para unificar BD (Bloque B)
-- Agregar aviso de privacidad en pantalla del kiosco físico al momento de captura
-- Implementar portal ARCO auto-servicio para padres/tutores
-- Pen-test de la derivación de clave por `schoolId`
+- Implementar descifrado AES-GCM-256 en Python para leer `biometricos_seguros`
+- Aviso de privacidad en pantalla del kiosco al momento de captura
+- Portal ARCO auto-servicio para padres/tutores
+- Pen-test de derivación de clave por schoolId
+
+### Algoritmo de cifrado (Bloque B)
+
+Documentado en detalle en `tools/TERMINAL-PRO-INTEGRATION.md` del repo web:
+
+```
+AES-GCM-256
+PBKDF2-HMAC-SHA256 con 150,000 iteraciones
+Salt de 32 bytes random (único por escuela en _config/biometric_salt)
+Seed: "SCHOOL_KEY_CBTIS001_KEYON_BIOMETRIC_2026"
+IV: 12 bytes random por encriptación
+Gotcha: salt se pasa a PBKDF2 como UTF-8 del string base64, NO bytes decodificados
+```
 
 ---
 
 ## Limitaciones conocidas
 
-1. **Bucle de reconocimiento aún no implementado** — los scripts actuales son one-shot (una foto por ejecución). Se requiere un loop de captura continua para operación como kiosco real.
-
-2. **Sin UI en la pantalla de la Pi** — la pantalla SPI ILI9486 adquirida aún no tiene drivers configurados. Se planea usar fbtft o fbcp-ili9341.
-
-3. **Audio no conectado** — PAM8403 y bocinas adquiridas pero sin cablear (requiere soldado de headers a la Pi Zero 2W).
-
-4. **Sin sincronización bidireccional** — la Pi escribe a Firestore pero no lee los alumnos del `scanner-v3`. La BD local SQLite está separada. Esto es intencional para la fase 1 (demo) pero debe unificarse en Bloque B.
-
-5. **Sin integración con ESP32 v8.3 PIR** — el módulo con sensores y pantalla TFT existente no está conectado aún. Requiere servidor WebSocket en la Pi.
-
-6. **Comparación secuencial** — el match 1:N recorre alumnos uno por uno. Para más de 500 alumnos sería necesario usar estructuras tipo FAISS o Annoy.
-
-7. **Sensibilidad a iluminación** — pruebas iniciales con luz cálida artificial; falta validar con luz natural, contraluz y bajas condiciones.
+1. **Pantalla SPI aún no conectada** — pendiente soldar headers (lunes 20 abril)
+2. **Audio no conectado** — PAM8403 + bocinas esperan headers
+3. **No integrado con ESP32 v8.3 PIR** — falta WebSocket bridge
+4. **BD local NO sincroniza con web** — Bloque B pendiente
+5. **Comparación secuencial O(n)** — para >500 alumnos requeriría FAISS
+6. **Single-band WiFi** — no compatible con routers 5GHz only
+7. **Sensibilidad a iluminación** — faltan pruebas con luz natural extrema
 
 ---
 
 ## Roadmap
 
-### Corto plazo (semana del 20-26 abril 2026)
+### Inmediato (semana del 20-26 abril 2026)
 
-- [ ] Soldar headers 40 pines a la Raspberry Pi Zero 2W
-- [ ] Conectar pantalla SPI ILI9486 con drivers fbtft o fbcp
-- [ ] Conectar PAM8403 + bocinas por I2S o PWM audio
+- [ ] Comprar headers 40 pines en Steren Fresnillo (lunes)
+- [ ] Soldar headers con supervisión en CBTis (lunes-martes)
+- [ ] Conectar pantalla SPI ILI9486 con drivers fbtft/fbcp
+- [ ] Conectar PAM8403 + bocinas
+- [ ] Actualizar documentos CNPyPE para upload del miércoles 22
+- [ ] Integrar ESP32 v8.3 PIR vía WebSocket bridge
+- [ ] Grabar video demo de 3-5 min
 - [ ] Imprimir case 3D con branding Exara
-- [ ] Integrar con ESP32 v8.3 PIR vía WebSocket (usar protocolo existente `EXITO|nombre|grupo|hora|puntual`)
-- [ ] Crear script `terminal_main.py` con loop principal del kiosco
-- [ ] Implementar UI minimal con Tkinter o Pygame fullscreen
-- [ ] Grabar video demo para el nacional
 
-### Mediano plazo (post-CNPyPE Nacional)
+### CNPyPE Nacional (semana del 27 abril)
 
-- [ ] Implementar descifrado AES-GCM-256 desde Python para leer `biometricos_seguros` del sistema web y unificar BD
-- [ ] Aviso de privacidad en pantalla del kiosco al momento de captura (Art. 8 LFPDPPP)
-- [ ] Portal auto-servicio de derechos ARCO para padres
-- [ ] Optimización de match 1:N con índice FAISS para N > 500
-- [ ] Soporte multilingüe (español + náhuatl + inglés)
-- [ ] Modo offline con buffer y sincronización diferida
+- [ ] Montaje final del kiosco
+- [ ] Pruebas finales de estabilidad
+- [ ] Transporte al lugar del nacional
+- [ ] Defensa del proyecto
+
+### Post-nacional (mayo 2026)
+
+- [ ] Implementar descifrado AES-GCM-256 en Python (Bloque B)
+- [ ] Aviso de privacidad en pantalla del kiosco
+- [ ] Portal ARCO auto-servicio
+- [ ] Optimización con FAISS para N > 500
+- [ ] Soporte multilingüe (español + inglés + náhuatl)
+- [ ] Modo offline con buffer y sync diferido
 
 ### Largo plazo
 
-- [ ] Adaptación a Raspberry Pi 5 (procesador más potente, AI accelerator integrado)
-- [ ] Certificación de privacidad por tercero (auditoría externa)
-- [ ] Paquete Debian `.deb` instalable con un comando
-- [ ] Sistema de actualización OTA
-- [ ] Telemetría operativa agregada (uptime, temperatura, uso) para panel admin
+- [ ] Adaptación a Raspberry Pi 5 (más potencia, AI accelerator)
+- [ ] Certificación de privacidad por tercero
+- [ ] Paquete Debian `.deb` con un comando
+- [ ] Sistema OTA para updates remotos
+- [ ] Dashboard de analytics operativos agregados
 
 ---
 
@@ -769,6 +924,12 @@ Alumno — CBTis No. 001, Fresnillo, Zacatecas, México
 - **Mtra. Lorena Santana Martínez** — Asesora metodológica (investigación, documentación)
 - **Mtra. Daniela Morillo** — Departamento de Vinculación con el Sector Productivo, CBTis 001
 
+### Colaboradores de desarrollo
+
+- **Sistema web v3.x** — co-desarrollado con Claude Code (Anthropic)
+- **Terminal Pro v2** — co-desarrollado con Claude (Anthropic)
+- **Integración paralela** — coordinación entre ambas instancias
+
 ### Licencia
 
 Copyright © 2026 Santiago Rivera López / Exara Studio
@@ -782,16 +943,33 @@ Para uso académico, educativo o investigativo no-comercial contactar a contacto
 ## Agradecimientos
 
 - **OpenCV** — por el Model Zoo con YuNet y SFace de libre uso
-- **Google Firebase** — por la infraestructura Firestore
+- **Google Firebase** — por la infraestructura Firestore y Hosting
 - **Raspberry Pi Foundation** — por hardware accesible y documentación abierta
+- **Anthropic** — por Claude y Claude Code (trabajo en paralelo coordinado)
 - **Comunidad open-source** — por las herramientas que hacen esto posible
 
 ---
 
 ## Versiones
 
-- **v2.0.0-dev** (19 abril 2026) — Primera versión funcional end-to-end. Reconocimiento facial nativo + Firebase sync validados.
+| Versión | Fecha | Features principales |
+|---|---|---|
+| v2.0.1-dev | 19 abril 2026, 23:10 | First functional release, pipeline Firebase |
+| v2.0.2-dev | 19 abril 2026, 23:17 | File logging + error resilience |
+| v2.0.3-dev | 19 abril 2026, 23:29 | Heartbeat to terminal_status |
+| v2.0.4-dev | 19 abril 2026, 23:45 | Systemd auto-start (reboot validated) |
+
+### Releases del ecosistema web coordinados
+
+| Versión web | Fecha | Terminal-related changes |
+|---|---|---|
+| v3.15.4 | 19 abril 2026 | Badge "Terminal" en admin-dashboard + alumno-main |
+| v3.15.5 | 20 abril 2026, ~00:00 | Panel "Terminales" + rules Firestore |
 
 ---
 
-*Documento generado el 19 de abril de 2026 como parte del proceso de desarrollo de Keyon Terminal Pro v2, proyecto presentado al XXVIII Concurso Nacional de Prototipos y Proyectos de Emprendimiento (CNPyPE) 2026 — Fase Nacional.*
+*Documento actualizado el 20 de abril de 2026 a las 00:00 CST como parte del proceso de desarrollo de Keyon Terminal Pro v2, proyecto presentado al XXVIII Concurso Nacional de Prototipos y Proyectos de Emprendimiento (CNPyPE) 2026 — Fase Nacional, registro 26-AT2099.*
+
+---
+
+**🏆 Hito destacado:** En una sola jornada del 19 de abril de 2026, este proyecto pasó de ser una microSD vacía a un sistema embebido de reconocimiento facial con auto-start validado post-reboot, monitoreo remoto vía Firestore, y integración con sistema web en producción. Todo sobre hardware de ~$3,225 MXN.
