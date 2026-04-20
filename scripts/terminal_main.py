@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 KEYON Terminal Pro v2 - Main Loop
-Fase 1.3 - Logs a archivo + errores robustos
+Fase 1.4 - Logs + errores robustos + heartbeat a Firebase
 
 Uso:
     python3 terminal_main.py              # modo real
     python3 terminal_main.py --dry-run    # modo demo
-    python3 terminal_main.py --debug      # logs más verbosos
+    python3 terminal_main.py --debug      # logs mas verbosos
 """
 
 import cv2
@@ -16,6 +16,8 @@ import subprocess
 import time
 import sys
 import os
+import socket
+import shutil
 import logging
 from logging.handlers import TimedRotatingFileHandler
 from datetime import datetime, time as dtime
@@ -27,7 +29,7 @@ from firebase_admin import credentials, firestore
 DRY_RUN = "--dry-run" in sys.argv or "--demo" in sys.argv
 DEBUG = "--debug" in sys.argv
 
-# === Configuración ===
+# === Configuracion ===
 BASE_DIR = "/home/keyon/keyon-terminal"
 DB_PATH = f"{BASE_DIR}/db/keyon.db"
 MODELO_DET = f"{BASE_DIR}/modelos/face_detection_yunet_2023mar.onnx"
@@ -42,16 +44,16 @@ UMBRAL_L2 = 1.128
 INTERVALO = 3
 COOLDOWN_MISMO_ALUMNO = 60
 TERMINAL_ID = "keyon-pi-zero2w-01"
+HEARTBEAT_INTERVAL = 300  # cada 5 minutos
 ESCUELA = "CBTis No. 001"
 COLECCION = "ingresos_cbtis"
-VERSION = "2.0.2-dev"
+COLECCION_STATUS = "terminal_status"
+VERSION = "2.0.3-dev"
 
-# Umbrales de resiliencia
 MAX_FALLOS_CONSECUTIVOS = 5
 BACKOFF_INICIAL = 1
 BACKOFF_MAX = 30
 
-# Umbrales estadoLlegada
 TOLERANCIA_MATUTINO = dtime(7, 15, 0)
 LIMITE_MATUTINO = dtime(8, 0, 0)
 TOLERANCIA_VESPERTINO = dtime(13, 25, 0)
@@ -66,7 +68,6 @@ os.makedirs(LOG_DIR, exist_ok=True)
 log = logging.getLogger("keyon")
 log.setLevel(logging.DEBUG if DEBUG else logging.INFO)
 
-# Handler archivo con rotación diaria, guarda 30 días
 file_handler = TimedRotatingFileHandler(
     LOG_FILE, when="midnight", interval=1, backupCount=30, encoding="utf-8"
 )
@@ -76,7 +77,6 @@ file_handler.setFormatter(logging.Formatter(
 ))
 file_handler.setLevel(logging.DEBUG)
 
-# Handler consola (lo que ves en la terminal)
 console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setFormatter(logging.Formatter("%(message)s"))
 console_handler.setLevel(logging.INFO)
@@ -84,7 +84,7 @@ console_handler.setLevel(logging.INFO)
 log.addHandler(file_handler)
 log.addHandler(console_handler)
 
-# === Utilidades de negocio ===
+# === Utilidades ===
 
 def determinar_turno(alumno_turno=None, grupo=None):
     if alumno_turno and alumno_turno.strip():
@@ -127,14 +127,47 @@ def extraer_grado(grupo):
     return f"{grupo[0]}°{grupo[1]}"
 
 def temperatura_cpu():
-    """Lee temperatura CPU de la Pi. Retorna float o None."""
     try:
         with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
             return int(f.read().strip()) / 1000.0
     except Exception:
         return None
 
-# === Inicialización con logs ===
+def obtener_info_sistema():
+    """Info para heartbeat: RAM, disco, uptime, IP local"""
+    info = {}
+    try:
+        with open("/proc/meminfo") as f:
+            lines = f.readlines()
+        mem_total = int([l for l in lines if "MemTotal" in l][0].split()[1])
+        mem_free = int([l for l in lines if "MemAvailable" in l][0].split()[1])
+        info["ramUsadaMB"] = (mem_total - mem_free) // 1024
+    except Exception:
+        info["ramUsadaMB"] = 0
+
+    try:
+        _, _, libre = shutil.disk_usage("/")
+        info["espacioDiscoLibreGB"] = round(libre / (1024**3), 1)
+    except Exception:
+        info["espacioDiscoLibreGB"] = 0
+
+    try:
+        with open("/proc/uptime") as f:
+            info["uptimeSegundos"] = int(float(f.read().split()[0]))
+    except Exception:
+        info["uptimeSegundos"] = 0
+
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        info["ip"] = s.getsockname()[0]
+        s.close()
+    except Exception:
+        info["ip"] = "unknown"
+
+    return info
+
+# === Inicializacion con logs ===
 banner = "DRY-RUN" if DRY_RUN else "PRODUCCION"
 log.info("=" * 60)
 log.info(f"  KEYON Terminal Pro v2 - Kiosco v{VERSION} [{banner}]")
@@ -143,6 +176,7 @@ log.info(f"  Inicio: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 log.info(f"  Terminal ID: {TERMINAL_ID}")
 log.info(f"  Escuela: {ESCUELA}")
 log.info(f"  Coleccion: {COLECCION}")
+log.info(f"  Heartbeat cada: {HEARTBEAT_INTERVAL}s")
 log.info(f"  Log file: {LOG_FILE}")
 temp_inicio = temperatura_cpu()
 if temp_inicio:
@@ -152,7 +186,7 @@ if DRY_RUN:
     log.warning("  MODO DRY-RUN: no escribira a Firebase")
 
 if DEBUG:
-    log.debug("  MODO DEBUG activado: logs verbosos")
+    log.debug("  MODO DEBUG activado")
 
 log.info("")
 log.info("  Cargando YuNet + SFace...")
@@ -207,10 +241,9 @@ else:
 
 ultimo_registro = {}
 
-# === Funciones core con manejo de errores ===
+# === Funciones core ===
 
 def capturar_frame():
-    """Captura frame. Retorna True/False."""
     cmd = [
         "ffmpeg", "-f", "v4l2", "-video_size", "640x480",
         "-i", "/dev/video0", "-vf", "select='eq(n,5)'",
@@ -224,13 +257,13 @@ def capturar_frame():
         log.warning("Timeout ffmpeg (10s)")
         return False
     except subprocess.CalledProcessError as e:
-        log.warning(f"ffmpeg falló con código {e.returncode}")
+        log.warning(f"ffmpeg fallo con codigo {e.returncode}")
         return False
     except FileNotFoundError:
-        log.error("ffmpeg no está instalado")
+        log.error("ffmpeg no esta instalado")
         return False
     except Exception as e:
-        log.warning(f"Captura falló: {e}")
+        log.warning(f"Captura fallo: {e}")
         return False
 
 def identificar_rostro(imagen):
@@ -244,10 +277,10 @@ def identificar_rostro(imagen):
         alineado = reconocedor.alignCrop(imagen, rostro)
         emb_nuevo = reconocedor.feature(alineado)
     except cv2.error as e:
-        log.warning(f"OpenCV error en identificación: {e}")
+        log.warning(f"OpenCV error: {e}")
         return None
     except Exception as e:
-        log.warning(f"Error inesperado en identificación: {e}")
+        log.warning(f"Error en identificacion: {e}")
         return None
 
     mejor, mejor_cos, mejor_l2 = None, 0.0, 999.0
@@ -260,7 +293,7 @@ def identificar_rostro(imagen):
             if sc > mejor_cos:
                 mejor_cos, mejor_l2, mejor = sc, sl, alumno
         except Exception as e:
-            log.debug(f"Match falló para {alumno['nombre']}: {e}")
+            log.debug(f"Match fallo para {alumno['nombre']}: {e}")
             continue
 
     if mejor and mejor_cos > UMBRAL_COSENO and mejor_l2 < UMBRAL_L2:
@@ -345,11 +378,59 @@ def esta_en_cooldown(matricula):
     transcurrido = (datetime.now() - ultimo_registro[matricula]).total_seconds()
     return transcurrido < COOLDOWN_MISMO_ALUMNO
 
-# === Loop principal con resiliencia ===
+def enviar_heartbeat(inicio_sesion, total_registros_sesion):
+    """Actualiza terminal_status/{terminalId} con estado actual"""
+    if DRY_RUN or not firebase_ok:
+        return False
+    
+    try:
+        ahora = datetime.now()
+        info = obtener_info_sistema()
+        temp = temperatura_cpu() or 0.0
+        
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute("""
+                SELECT COUNT(*) FROM asistencias 
+                WHERE date(timestamp) = date('now', 'localtime')
+            """)
+            registros_hoy = c.fetchone()[0]
+            conn.close()
+        except Exception:
+            registros_hoy = 0
+        
+        doc = {
+            "terminalId": TERMINAL_ID,
+            "dispositivo": "Raspberry Pi Zero 2W",
+            "estado": "online",
+            "ultimoHeartbeat": firestore.SERVER_TIMESTAMP,
+            "ultimoHeartbeatLocal": ahora.isoformat(),
+            "temperaturaCpu": round(temp, 1),
+            "uptimeSegundos": info["uptimeSegundos"],
+            "totalRegistrosHoy": registros_hoy,
+            "totalRegistrosSesion": total_registros_sesion,
+            "versionTerminal": VERSION,
+            "conectadoDesde": inicio_sesion.isoformat(),
+            "escuela": ESCUELA,
+            "ip": info["ip"],
+            "ramUsadaMB": info["ramUsadaMB"],
+            "espacioDiscoLibreGB": info["espacioDiscoLibreGB"],
+            "origen": "terminal_pi"
+        }
+        
+        db.collection(COLECCION_STATUS).document(TERMINAL_ID).set(doc)
+        return True
+    except Exception as e:
+        log.warning(f"Heartbeat fallo: {e}")
+        return False
+
+# === Loop principal ===
 log.info("")
 log.info("=" * 60)
 log.info(f"  KIOSCO ACTIVO - Ctrl+C para salir")
 log.info(f"  Intervalo: {INTERVALO}s | Cooldown: {COOLDOWN_MISMO_ALUMNO}s")
+log.info(f"  Heartbeat: cada {HEARTBEAT_INTERVAL}s")
 log.info(f"  Max fallos consecutivos: {MAX_FALLOS_CONSECUTIVOS}")
 log.info("=" * 60)
 log.info("")
@@ -360,32 +441,46 @@ total_registrados = 0
 total_sincronizados = 0
 total_cooldown = 0
 total_errores = 0
+total_heartbeats = 0
 fallos_consecutivos = 0
 backoff = BACKOFF_INICIAL
+
+inicio_sesion = datetime.now()
+ultimo_heartbeat = datetime.now()
+
+# Heartbeat inicial
+if enviar_heartbeat(inicio_sesion, total_registrados):
+    total_heartbeats += 1
+    log.info(f"Heartbeat inicial enviado a {COLECCION_STATUS}/{TERMINAL_ID}")
 
 try:
     while True:
         contador += 1
         hora_str = datetime.now().strftime('%H:%M:%S')
 
+        # Heartbeat periodico
+        if (datetime.now() - ultimo_heartbeat).total_seconds() >= HEARTBEAT_INTERVAL:
+            if enviar_heartbeat(inicio_sesion, total_registrados):
+                total_heartbeats += 1
+                log.info(f"[{hora_str}] Heartbeat #{total_heartbeats} enviado")
+                ultimo_heartbeat = datetime.now()
+
         try:
             t0 = time.time()
             
-            # === Captura con retry logic ===
             if not capturar_frame():
                 fallos_consecutivos += 1
                 total_errores += 1
-                log.warning(f"[{hora_str}] #{contador} captura falló (consecutivos: {fallos_consecutivos}/{MAX_FALLOS_CONSECUTIVOS})")
+                log.warning(f"[{hora_str}] #{contador} captura fallo (consecutivos: {fallos_consecutivos}/{MAX_FALLOS_CONSECUTIVOS})")
                 
                 if fallos_consecutivos >= MAX_FALLOS_CONSECUTIVOS:
-                    log.error(f"[{hora_str}] Muchos fallos consecutivos, backoff {backoff}s")
+                    log.error(f"[{hora_str}] Muchos fallos, backoff {backoff}s")
                     time.sleep(backoff)
                     backoff = min(backoff * 2, BACKOFF_MAX)
                 else:
                     time.sleep(INTERVALO)
                 continue
             
-            # Si llegamos aquí, captura exitosa → reset backoff
             if fallos_consecutivos > 0:
                 log.info(f"[{hora_str}] Recuperado de {fallos_consecutivos} fallos")
                 fallos_consecutivos = 0
@@ -425,7 +520,7 @@ try:
                             total_sincronizados += 1
                             log.info(f"[{hora_str}] #{contador} REGISTRO {alumno['nombre']} | {doc['identificador']} | estado={doc['estadoLlegada']} | cos={cos:.3f} | Firebase {doc_id[:10]} | {t_total:.1f}s")
                         else:
-                            log.warning(f"[{hora_str}] #{contador} LOCAL SOLO {alumno['nombre']} (firebase falló)")
+                            log.warning(f"[{hora_str}] #{contador} LOCAL SOLO {alumno['nombre']} (firebase fallo)")
 
                     ultimo_registro[alumno["matricula"]] = datetime.now()
 
@@ -437,12 +532,25 @@ try:
             time.sleep(INTERVALO)
 
 except KeyboardInterrupt:
+    # Heartbeat final con estado offline
+    if not DRY_RUN and firebase_ok:
+        try:
+            db.collection(COLECCION_STATUS).document(TERMINAL_ID).update({
+                "estado": "offline",
+                "ultimoHeartbeatLocal": datetime.now().isoformat(),
+                "ultimoHeartbeat": firestore.SERVER_TIMESTAMP
+            })
+            log.info("Estado final: offline (enviado a Firebase)")
+        except Exception as e:
+            log.warning(f"No se pudo marcar offline: {e}")
+    
     log.info("")
     log.info("=" * 60)
     log.info(f"  KIOSCO DETENIDO")
     log.info(f"  Total ciclos:              {contador}")
     log.info(f"  Identificaciones:          {total_identificados}")
     log.info(f"  En cooldown (no registro): {total_cooldown}")
+    log.info(f"  Heartbeats enviados:       {total_heartbeats}")
     log.info(f"  Errores:                   {total_errores}")
     if not DRY_RUN:
         log.info(f"  Registros nuevos:          {total_registrados}")
@@ -452,5 +560,7 @@ except KeyboardInterrupt:
     temp_fin = temperatura_cpu()
     if temp_fin:
         log.info(f"  CPU temp final:            {temp_fin:.1f} C")
+    uptime = int((datetime.now() - inicio_sesion).total_seconds())
+    log.info(f"  Sesion duracion:           {uptime}s ({uptime//60}m)")
     log.info(f"  Hora fin: {datetime.now().strftime('%H:%M:%S')}")
     log.info("=" * 60)

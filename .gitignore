@@ -46,3 +46,7 @@ test*.jpg
 # === Sistema ===
 .bash_history
 .python_history
+
+# === Logs del kiosco ===
+logs/
+*.log
