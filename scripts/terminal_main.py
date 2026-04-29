@@ -43,7 +43,7 @@ UMBRAL_COSENO = 0.363
 UMBRAL_L2 = 1.128
 INTERVALO = 3
 COOLDOWN_MISMO_ALUMNO = 60
-TERMINAL_ID = "keyon-pi-zero2w-01"
+TERMINAL_ID = "keyon-pi4-01"
 HEARTBEAT_INTERVAL = 300  # cada 5 minutos
 ESCUELA = "CBTis No. 001"
 COLECCION = "ingresos_cbtis"
@@ -246,7 +246,7 @@ ultimo_registro = {}
 def capturar_frame():
     cmd = [
         "ffmpeg", "-f", "v4l2", "-video_size", "640x480",
-        "-i", "/dev/video0", "-vf", "select='eq(n,5)'",
+        "-i", "/dev/video0", "-vf", "select='eq(n,15)'",
         "-frames:v", "1", "-update", "1", "-y",
         FRAME_TEMP, "-loglevel", "quiet"
     ]
@@ -323,7 +323,7 @@ def construir_documento(alumno, score_c, score_l2):
         "escuela": ESCUELA,
         "origen": "terminal_pi",
         "terminalId": TERMINAL_ID,
-        "dispositivo": "Raspberry Pi Zero 2W",
+        "dispositivo": "Raspberry Pi 4 Model B",
         "metodoVerificacion": "facial_local_terminal",
         "scoreCosine": float(score_c),
         "scoreL2": float(score_l2),
@@ -402,7 +402,7 @@ def enviar_heartbeat(inicio_sesion, total_registros_sesion):
         
         doc = {
             "terminalId": TERMINAL_ID,
-            "dispositivo": "Raspberry Pi Zero 2W",
+            "dispositivo": "Raspberry Pi 4 Model B",
             "estado": "online",
             "ultimoHeartbeat": firestore.SERVER_TIMESTAMP,
             "ultimoHeartbeatLocal": ahora.isoformat(),
