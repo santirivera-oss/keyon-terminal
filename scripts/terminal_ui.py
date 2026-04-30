@@ -43,7 +43,7 @@ ESCUELA = "CBTis No. 001"
 COLECCION = "ingresos_cbtis"
 COLECCION_STATUS = "terminal_status"
 HEARTBEAT_INTERVAL = 300
-VERSION_TERMINAL = "2.0.7-pi4-ui"
+VERSION_TERMINAL = "2.0.8-pi4-voice"
 
 SOUND_ENABLED = True
 SOUND_MATCH = "/tmp/keyon_match.wav"
@@ -115,6 +115,67 @@ def generar_sonidos():
     audio_nomatch, sr = generar_tono([400, 250], duracion=0.30)
     guardar_wav(audio_nomatch, sr, SOUND_NOMATCH)
     print("Sonidos OK")
+
+
+
+# === Voz TTS (espeak-ng) ===
+ultimo_voz_match = {}
+ultimo_voz_nomatch = 0
+SOUND_VOZ_NOMATCH = "/tmp/keyon_voz_nomatch.wav"
+
+
+def obtener_saludo_hora():
+    """Devuelve saludo segun hora del dia."""
+    h = datetime.now().hour
+    if 6 <= h < 12:
+        return "Buenos dias"
+    elif 12 <= h < 19:
+        return "Buenas tardes"
+    else:
+        return "Buenas noches"
+
+
+def generar_voz_match(primer_nombre):
+    """Genera WAV con saludo personalizado para el alumno."""
+    saludo = obtener_saludo_hora()
+    texto = f"{saludo}, bienvenido {primer_nombre}"
+    path = f"/tmp/keyon_voz_{primer_nombre.lower().replace(' ', '_')}.wav"
+    try:
+        subprocess.run(
+            ["espeak-ng", "-v", "es-mx", "-s", "135", "-w", path, texto],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        return path
+    except Exception as e:
+        print(f"  TTS ERROR: {e}")
+        return None
+
+
+def generar_voz_nomatch_wav():
+    """Pre-genera el WAV de denegado al inicio."""
+    texto = "Rostro no identificado, acuda con administracion"
+    try:
+        subprocess.run(
+            ["espeak-ng", "-v", "es-mx", "-s", "135", "-w", SOUND_VOZ_NOMATCH, texto],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        print("Voz denegado OK")
+    except Exception as e:
+        print(f"Voz denegado ERROR: {e}")
+
+
+def reproducir_voz(path):
+    """Reproduce WAV con pw-play en thread separado."""
+    if not path or not os.path.exists(path):
+        return
+    def _play():
+        try:
+            subprocess.Popen(['pw-play', path],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+    threading.Thread(target=_play, daemon=True).start()
+
 
 
 def obtener_temp_cpu():
@@ -266,6 +327,7 @@ print(f"  KEYON Terminal UI v{VERSION_TERMINAL}")
 print("=" * 60)
 
 generar_sonidos()
+generar_voz_nomatch_wav()
 inicializar_firebase()
 
 print("Cargando modelos...")
@@ -414,6 +476,10 @@ def actualizar_frame():
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] "
                           f"MATCH {alumno['nombre']} | cos={match['cos']:.3f}")
                     reproducir_sonido(SOUND_MATCH)
+                    primer_nombre = alumno["nombre"].split()[0]
+                    voz_path = generar_voz_match(primer_nombre)
+                    # Esperar 0.4s para que termine el ding-ding antes de hablar
+                    threading.Timer(0.4, reproducir_voz, args=[voz_path]).start()
                     escribir_match_firebase(alumno, match["cos"], match["l2"])
                 
                 last_detection = {"tipo": "match", "rostro": rostro,
@@ -421,9 +487,10 @@ def actualizar_frame():
                                   "l2": match["l2"], "confianza": confianza,
                                   "timestamp": time.time()}
             else:
-                if (ahora_ts - ultimo_sonido_nomatch) > 5:
+                if (ahora_ts - ultimo_sonido_nomatch) > 15:
                     ultimo_sonido_nomatch = ahora_ts
                     reproducir_sonido(SOUND_NOMATCH)
+                    threading.Timer(0.5, reproducir_voz, args=[SOUND_VOZ_NOMATCH]).start()
                 last_detection = {"tipo": "no_match", "rostro": rostro,
                                   "confianza": confianza, "timestamp": time.time()}
         else:
@@ -440,8 +507,9 @@ def actualizar_frame():
             cos = last_detection["cos"]
             l2 = last_detection["l2"]
             conf = last_detection["confianza"]
-            label_estado.config(text=f"✓ {alumno['nombre']}", fg=COLOR_SUCCESS)
-            label_detalle.config(text=f"{alumno['matricula']} · {alumno['grupo']}",
+            primer_nombre = alumno['nombre'].split()[0]
+            label_estado.config(text=f"✓ Bienvenido {primer_nombre}", fg=COLOR_SUCCESS)
+            label_detalle.config(text=f"{alumno['grupo']} · {determinar_estado(determinar_turno())} · {datetime.now().strftime('%H:%M')}",
                                  fg=COLOR_DETECT)
             label_score.config(text=f"cos={cos:.3f}  L2={l2:.3f}  conf={conf:.2f}",
                               fg=COLOR_TEXT)
