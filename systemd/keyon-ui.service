@@ -1,0 +1,36 @@
+[Unit]
+Description=KEYON Terminal Pro v2 - UI Kiosk Display
+Documentation=https://github.com/santirivera-oss/keyon-terminal
+After=graphical.target network-online.target
+Wants=network-online.target
+Requires=graphical.target
+
+[Service]
+Type=simple
+User=keyon
+Group=keyon
+WorkingDirectory=/home/keyon/keyon-terminal
+
+# Variables Wayland críticas
+Environment="DISPLAY=:0"
+Environment="XDG_RUNTIME_DIR=/run/user/1000"
+Environment="WAYLAND_DISPLAY=wayland-0"
+Environment="HOME=/home/keyon"
+
+# Espera 10 segundos extra después de boot para que Wayland esté listo
+ExecStartPre=/bin/sleep 10
+
+ExecStart=/usr/bin/python3 /home/keyon/keyon-terminal/scripts/terminal_ui.py
+
+Restart=on-failure
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=keyon-ui
+
+# Limites Pi 4 1GB
+MemoryMax=600M
+CPUQuota=120%
+
+[Install]
+WantedBy=graphical.target
