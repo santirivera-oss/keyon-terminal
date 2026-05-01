@@ -64,3 +64,4 @@ db/*.pre-offline-backup
 # Portal logs
 logs/portal.log
 scripts/portal/__pycache__/
+scripts/portal_ui.py.*-backup

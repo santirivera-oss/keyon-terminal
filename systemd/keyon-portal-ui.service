@@ -1,0 +1,35 @@
+[Unit]
+Description=KEYON Portal UI - LCD display during WiFi setup
+Documentation=https://github.com/santirivera-oss/keyon-terminal
+After=graphical.target keyon-portal-trigger.service
+Requires=graphical.target
+ConditionPathExists=/tmp/keyon-portal-active
+
+[Service]
+Type=simple
+User=keyon
+Group=keyon
+WorkingDirectory=/home/keyon/keyon-terminal
+
+# Variables Wayland
+Environment="DISPLAY=:0"
+Environment="XDG_RUNTIME_DIR=/run/user/1000"
+Environment="WAYLAND_DISPLAY=wayland-0"
+Environment="HOME=/home/keyon"
+
+# Espera a que graphical este listo
+ExecStartPre=/bin/sleep 8
+ExecStart=/usr/bin/python3 /home/keyon/keyon-terminal/scripts/portal_ui.py
+
+Restart=on-failure
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=keyon-portal-ui
+
+# Limites Pi 4 1GB
+MemoryMax=200M
+
+[Install]
+WantedBy=graphical.target
