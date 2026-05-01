@@ -1,9 +1,10 @@
 [Unit]
 Description=KEYON Terminal Pro v2 - UI Kiosk Display
 Documentation=https://github.com/santirivera-oss/keyon-terminal
-After=graphical.target network-online.target
+After=graphical.target network-online.target keyon-portal-trigger.service
 Wants=network-online.target
 Requires=graphical.target
+ConditionPathExists=!/tmp/keyon-portal-active
 
 [Service]
 Type=simple

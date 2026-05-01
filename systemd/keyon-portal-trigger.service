@@ -1,0 +1,17 @@
+[Unit]
+Description=KEYON Portal Trigger - WiFi auto-detection
+After=NetworkManager-wait-online.service
+Wants=NetworkManager-wait-online.service
+Before=keyon-ui.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+ExecStart=/usr/bin/python3 /home/keyon/keyon-terminal/scripts/wifi-detector.py
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=120
+
+[Install]
+WantedBy=graphical.target
