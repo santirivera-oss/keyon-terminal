@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KEYON · Conectado</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container container-centro">
+        <div class="estado-card success">
+            <div class="estado-icono">✓</div>
+            <h1>¡Conectado!</h1>
+            <p class="estado-info">
+                KEYON se conectó exitosamente a:<br>
+                <strong>{{ ssid }}</strong>
+            </p>
+            <div class="loader"></div>
+            <p class="estado-info-secundario">
+                El sistema se reiniciará en unos segundos...<br>
+                Puedes cerrar esta ventana.
+            </p>
+        </div>
+    </div>
+</body>
+</html>

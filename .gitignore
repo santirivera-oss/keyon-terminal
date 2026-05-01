@@ -50,3 +50,17 @@ test*.jpg
 # === Logs del kiosco ===
 logs/
 *.log
+
+# Local backups (no commitear)
+backups/
+*.v*-backup
+*.backup
+
+# Databases con datos biometricos (NUNCA commitear)
+db/*.db
+db/*.db-backup
+db/*.pre-offline-backup
+
+# Portal logs
+logs/portal.log
+scripts/portal/__pycache__/

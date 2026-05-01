@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KEYON · Configurar WiFi</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔐 KEYON</h1>
+            <p class="subtitle">Configurar conexión WiFi</p>
+        </header>
+
+        <main>
+            {% if redes %}
+                <p class="info">Selecciona una red para continuar:</p>
+                <div class="redes-lista">
+                    {% for red in redes %}
+                        <div class="red-card" onclick="seleccionarRed('{{ red.ssid }}', {{ 'true' if red.requires_password else 'false' }})">
+                            <div class="red-info">
+                                <div class="red-ssid">{{ red.ssid }}</div>
+                                <div class="red-meta">
+                                    {% if red.requires_password %}🔒{% else %}🔓{% endif %}
+                                    {{ red.security }} · {{ red.signal }}%
+                                </div>
+                            </div>
+                            <div class="red-arrow">›</div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="estado-vacio">
+                    <p>No se detectaron redes WiFi.</p>
+                    <button onclick="window.location.reload()" class="btn-secundario">Reintentar</button>
+                </div>
+            {% endif %}
+        </main>
+
+        <footer>
+            <p>KEYON Terminal Pro v2 · Exara Studio</p>
+        </footer>
+    </div>
+
+    <!-- Modal para password -->
+    <div id="modal-password" class="modal-overlay" style="display: none;">
+        <div class="modal">
+            <h2>Ingresa la contraseña</h2>
+            <p class="modal-ssid">Red: <strong id="modal-ssid-text"></strong></p>
+            <form id="form-conectar" action="/conectar" method="POST">
+                <input type="hidden" name="ssid" id="form-ssid">
+                <input type="password" name="password" id="form-password"
+                       placeholder="Contraseña WiFi" minlength="8">
+                <div class="modal-buttons">
+                    <button type="button" onclick="cerrarModal()" class="btn-secundario">Cancelar</button>
+                    <button type="submit" class="btn-principal">Conectar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        function seleccionarRed(ssid, requierePassword) {
+            document.getElementById('form-ssid').value = ssid;
+            document.getElementById('modal-ssid-text').textContent = ssid;
+            
+            if (requierePassword) {
+                document.getElementById('modal-password').style.display = 'flex';
+                setTimeout(() => document.getElementById('form-password').focus(), 100);
+            } else {
+                // Red abierta - conectar directamente
+                document.getElementById('form-password').value = '';
+                document.getElementById('form-conectar').submit();
+            }
+        }
+
+        function cerrarModal() {
+            document.getElementById('modal-password').style.display = 'none';
+            document.getElementById('form-password').value = '';
+        }
+
+        // Cerrar modal con click fuera
+        document.getElementById('modal-password').addEventListener('click', function(e) {
+            if (e.target === this) cerrarModal();
+        });
+    </script>
+</body>
+</html>

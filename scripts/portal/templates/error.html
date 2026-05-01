@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KEYON · Error</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container container-centro">
+        <div class="estado-card error">
+            <div class="estado-icono">✗</div>
+            <h1>No se pudo conectar</h1>
+            <p class="estado-info">
+                Error al conectar a <strong>{{ ssid }}</strong>:<br>
+                <code>{{ mensaje }}</code>
+            </p>
+            <p class="estado-info-secundario">
+                Verifica la contraseña e intenta de nuevo.
+            </p>
+            <a href="/" class="btn-principal">Volver</a>
+        </div>
+    </div>
+</body>
+</html>
