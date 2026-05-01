@@ -43,7 +43,7 @@ ESCUELA = "CBTis No. 001"
 COLECCION = "ingresos_cbtis"
 COLECCION_STATUS = "terminal_status"
 HEARTBEAT_INTERVAL = 300
-VERSION_TERMINAL = "2.0.8-pi4-voice"
+VERSION_TERMINAL = "2.0.9-pi4-offline"
 
 SOUND_ENABLED = True
 SOUND_MATCH = "/tmp/keyon_match.wav"
@@ -70,6 +70,13 @@ ultimo_sonido_nomatch = 0
 ultimo_heartbeat = 0
 frame_count = 0
 last_detection = None
+
+# === Offline-first state ===
+pendientes_count = 0           # cuantas asistencias pendientes
+ultimo_sync_attempt = 0        # timestamp ultimo intento sync
+ultimo_online_real = 0         # timestamp ultima escritura exitosa Firebase
+SYNC_INTERVAL = 30             # segundos entre sync attempts
+OFFLINE_WARNING_AFTER = 300    # 5 min sin sync = mostrar warning
 
 
 def generar_tono(frecuencias, duracion=0.15, sample_rate=44100, volumen=0.4):
@@ -286,16 +293,35 @@ def construir_documento(alumno, score_c, score_l2):
 
 
 def escribir_match_firebase(alumno, cos, l2):
-    if not firebase_ok or db_firestore is None:
+    """Guarda local SIEMPRE. Intenta Firebase si hay conexion."""
+    global pendientes_count, ultimo_online_real
+    
+    # Paso 1: SIEMPRE guardar local primero
+    asistencia_id = guardar_asistencia_local(alumno, cos, l2)
+    if asistencia_id is None:
+        print("  CRITICAL: No se pudo guardar local")
         return
+    
+    # Paso 2: Si Firebase OK, intentar sincronizar inmediatamente en thread
+    if not firebase_ok or db_firestore is None:
+        pendientes_count = contar_pendientes()
+        print(f"  Local OK (id={asistencia_id}). Firebase offline. Pendientes: {pendientes_count}")
+        return
+    
     def _write():
+        global pendientes_count, ultimo_online_real
         try:
             doc = construir_documento(alumno, cos, l2)
             ref = db_firestore.collection(COLECCION).add(doc)
             doc_id = ref[1].id
-            print(f"  Firebase OK: {doc_id}")
+            marcar_sincronizado(asistencia_id)
+            ultimo_online_real = time.time()
+            pendientes_count = contar_pendientes()
+            print(f"  Firebase OK: {doc_id}  (local id={asistencia_id})")
         except Exception as e:
-            print(f"  Firebase ERROR: {e}")
+            pendientes_count = contar_pendientes()
+            print(f"  Firebase ERROR (local id={asistencia_id} pendiente): {e}")
+    
     threading.Thread(target=_write, daemon=True).start()
 
 
@@ -320,6 +346,188 @@ def enviar_heartbeat():
     except Exception as e:
         print(f"Heartbeat ERROR: {e}")
         return False
+
+
+
+# === SQLite local (offline-first) ===
+def guardar_asistencia_local(alumno, score_c, score_l2):
+    """Guarda asistencia en SQLite local. Retorna ID o None si falla."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO asistencias 
+            (alumno_id, tipo, score_cosine, score_l2, sincronizado_firebase)
+            VALUES (?, ?, ?, ?, 0)
+        """, (alumno["id"], "entrada", float(score_c), float(score_l2)))
+        asistencia_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return asistencia_id
+    except Exception as e:
+        print(f"  SQLite ERROR: {e}")
+        return None
+
+
+def obtener_pendientes_sync():
+    """Devuelve lista de asistencias pendientes de sincronizar."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT a.id, a.alumno_id, a.timestamp, a.score_cosine, a.score_l2,
+                   al.nombre, al.grupo, al.matricula
+            FROM asistencias a
+            JOIN alumnos al ON a.alumno_id = al.id
+            WHERE a.sincronizado_firebase = 0
+            ORDER BY a.timestamp ASC
+            LIMIT 50
+        """)
+        pendientes = cursor.fetchall()
+        conn.close()
+        return pendientes
+    except Exception as e:
+        print(f"  SQLite query ERROR: {e}")
+        return []
+
+
+def contar_pendientes():
+    """Cuenta cuantas asistencias estan pendientes de sincronizar."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM asistencias WHERE sincronizado_firebase = 0")
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+    except Exception:
+        return 0
+
+
+def marcar_sincronizado(asistencia_id):
+    """Marca una asistencia como sincronizada."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE asistencias SET sincronizado_firebase = 1 WHERE id = ?",
+            (asistencia_id,)
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"  Sync mark ERROR: {e}")
+        return False
+
+
+def construir_doc_desde_pendiente(p):
+    """Construye documento Firebase desde fila pendiente."""
+    asist_id, alumno_id, ts, score_c, score_l2, nombre, grupo, matricula = p
+    
+    # Parsear timestamp local
+    try:
+        dt = datetime.fromisoformat(ts.replace(' ', 'T'))
+    except Exception:
+        dt = datetime.now()
+    
+    grado, aula = deducir_grado_aula(grupo)
+    
+    # Determinar turno y estado segun el timestamp ORIGINAL del match
+    hora_match = dt.time()
+    if dtime(6, 0) <= hora_match < dtime(14, 0):
+        turno = "matutino"
+    else:
+        turno = "vespertino"
+    
+    if turno == "matutino":
+        if hora_match < dtime(7, 15):
+            estado = "puntual"
+        elif hora_match < dtime(7, 30):
+            estado = "retardo"
+        else:
+            estado = "falta"
+    else:
+        if hora_match < dtime(14, 15):
+            estado = "puntual"
+        elif hora_match < dtime(14, 30):
+            estado = "retardo"
+        else:
+            estado = "falta"
+    
+    return {
+        "aula": aula,
+        "dispositivo": "Raspberry Pi 4 Model B",
+        "escuela": ESCUELA,
+        "estadoLlegada": estado,
+        "fecha": dt.strftime("%Y-%m-%d"),
+        "fotoUrl": None,
+        "grado": grado,
+        "grupo": grupo,
+        "hora": dt.strftime("%H:%M:%S"),
+        "identificador": matricula,
+        "metodoVerificacion": "facial_local_terminal",
+        "modo": "facial",
+        "nombre": nombre,
+        "origen": "terminal_pi",
+        "procesadoEnDispositivo": True,
+        "scoreCosine": float(score_c),
+        "scoreL2": float(score_l2),
+        "sincronizadoFirebase": True,
+        "terminalId": TERMINAL_ID,
+        "timestamp": dt.isoformat(),
+        "tipoPersona": "Alumno",
+        "tipoRegistro": "Ingreso",
+        "turno": turno,
+        "versionTerminal": VERSION_TERMINAL
+    }
+
+
+def sync_pendientes_a_firebase():
+    """Procesa cola de pendientes. Llamado periodicamente."""
+    global pendientes_count, ultimo_sync_attempt, ultimo_online_real
+    
+    ultimo_sync_attempt = time.time()
+    
+    if not firebase_ok or db_firestore is None:
+        pendientes_count = contar_pendientes()
+        return
+    
+    pendientes = obtener_pendientes_sync()
+    if not pendientes:
+        pendientes_count = 0
+        return
+    
+    print(f"[SYNC] Procesando {len(pendientes)} pendientes...")
+    sincronizadas = 0
+    
+    for p in pendientes:
+        asist_id = p[0]
+        try:
+            doc = construir_doc_desde_pendiente(p)
+            db_firestore.collection(COLECCION).add(doc)
+            if marcar_sincronizado(asist_id):
+                sincronizadas += 1
+                ultimo_online_real = time.time()
+        except Exception as e:
+            print(f"  Sync FAIL id={asist_id}: {e}")
+            # Si falla 1, probablemente todas fallaran. Cortar para no spamear.
+            break
+    
+    pendientes_count = contar_pendientes()
+    if sincronizadas > 0:
+        print(f"[SYNC] {sincronizadas} sincronizadas. Pendientes: {pendientes_count}")
+
+
+def sync_loop_background():
+    """Thread de background que sincroniza cada SYNC_INTERVAL segundos."""
+    while True:
+        time.sleep(SYNC_INTERVAL)
+        try:
+            sync_pendientes_a_firebase()
+        except Exception as e:
+            print(f"[SYNC] Loop error: {e}")
+
 
 
 print("=" * 60)
@@ -362,6 +570,17 @@ if firebase_ok:
     if enviar_heartbeat():
         print("Heartbeat inicial enviado")
         ultimo_heartbeat = time.time()
+        ultimo_online_real = time.time()
+
+# Contar pendientes al inicio
+pendientes_count = contar_pendientes()
+if pendientes_count > 0:
+    print(f"Pendientes de sync al inicio: {pendientes_count}")
+
+# Iniciar thread de sync en background
+sync_thread = threading.Thread(target=sync_loop_background, daemon=True)
+sync_thread.start()
+print(f"Sync thread iniciado (cada {SYNC_INTERVAL}s)")
 
 print("Warm-up camara (3 segundos)...")
 for _ in range(20):
@@ -540,8 +759,13 @@ def actualizar_frame():
     color_temp = COLOR_SUCCESS if temp < 65 else COLOR_WARN if temp < 75 else COLOR_ERROR
     label_status.config(text=f"● {temp:.0f}°C", fg=color_temp)
     
-    if firebase_ok:
+    # Indicador Firebase + pendientes
+    if firebase_ok and pendientes_count == 0:
         label_fb.config(text="☁", fg=COLOR_SUCCESS)
+    elif firebase_ok and pendientes_count > 0:
+        label_fb.config(text=f"☁ {pendientes_count}", fg=COLOR_WARN)
+    elif not firebase_ok and pendientes_count > 0:
+        label_fb.config(text=f"⧖ {pendientes_count}", fg=COLOR_WARN)
     else:
         label_fb.config(text="☁", fg=COLOR_ERROR)
     
