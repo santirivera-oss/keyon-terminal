@@ -1,6 +1,6 @@
 # KEYON Terminal Pro v2
 
-Sistema de reconocimiento facial nativo para control de asistencia escolar, desplegado sobre hardware embebido Raspberry Pi Zero 2W, con integración directa al ecosistema Firebase del proyecto Keyon Access System.
+Sistema de reconocimiento facial nativo para control de asistencia escolar, desplegado sobre hardware embebido Raspberry Pi 4 (1 GB RAM), con integración directa al ecosistema Firebase del proyecto Keyon Access System.
 
 **Versión actual:** v2.0.4-dev  
 **Última actualización:** 19 de abril de 2026  
@@ -142,15 +142,15 @@ BOOT → SYSTEMD → PYTHON → FIREBASE ─┬─► HEARTBEAT cada 5min
 
 ### Placa principal
 
-- **Modelo:** Raspberry Pi Zero 2W Rev 1.0
-- **Procesador:** Broadcom BCM2710A1, núcleo ARM Cortex-A53 quad-core @ 1 GHz (ARMv8, 64-bit)
-- **RAM:** 512MB LPDDR2 SDRAM (416 MB efectivos disponibles tras reserva GPU)
-- **Memoria swap:** 415 MB auxiliar en microSD
+- **Modelo:** Raspberry Pi 4 Model B (1 GB RAM)
+- **Procesador:** Broadcom BCM2711, núcleo ARM Cortex-A72 quad-core @ 1.5 GHz (ARMv8, 64-bit)
+- **RAM:** 1 GB LPDDR4-3200 SDRAM
 - **Almacenamiento:** microSD ADATA Premier 128GB UHS-I V10 A1 (114 GB útiles tras formateo, ~105 GB libres en uso)
-- **Conectividad:** WiFi 802.11 b/g/n 2.4 GHz + Bluetooth 4.2/BLE
+- **Conectividad:** WiFi 802.11 b/g/n/ac dual-band (2.4 GHz + 5 GHz) + Bluetooth 5.0/BLE + Gigabit Ethernet
 - **Interfaces activas:** SPI (`/dev/spidev0.0`, `/dev/spidev0.1`), I2C (`/dev/i2c-1`, `/dev/i2c-2`)
-- **Consumo en operación:** ~2-3W
-- **Temperatura típica:** 42-48°C idle, 50-55°C bajo carga continua (umbral throttling a 80°C)
+- **Consumo en operación:** ~2-5W
+- **Temperatura típica:** 45-52°C idle, 55-65°C bajo carga continua (umbral throttling a 80°C)
+- **Migración desde Pi Zero 2W:** Ver `docs/HARDWARE-PI4-DISPLAY.md` para detalles del cambio (v2.0.4-dev → posterior). 1 GB es suficiente para el pipeline YuNet + SFace + SQLite + Firebase Admin SDK validado en producción.
 
 ### Periféricos actuales
 
@@ -169,7 +169,7 @@ BOOT → SYSTEMD → PYTHON → FIREBASE ─┬─► HEARTBEAT cada 5min
 
 | Componente | Costo (MXN) | Estado |
 |---|---|---|
-| Raspberry Pi Zero 2W | 806.44 | ✅ En uso |
+| Raspberry Pi 4 Model B (1 GB RAM) | 1,186.00 | ✅ En uso (Mercado Libre, vendor 5.0) |
 | Fuente 5V 3A Tecneu | 139.56 | ✅ En uso |
 | microSD ADATA 128GB | 378.00 | ✅ En uso |
 | Cámara Logitech C270 | 486.00 | ✅ En uso |
@@ -401,7 +401,7 @@ Schema completo compatible con sistema web v3.15.5, enriquecido con campos espec
   // Campos específicos terminal
   origen: "terminal_pi",              // ⭐ discriminador para badge admin
   terminalId: string,
-  dispositivo: "Raspberry Pi Zero 2W",
+  dispositivo: "Raspberry Pi 4 Model B",
   metodoVerificacion: "facial_local_terminal",
   scoreCosine: number,
   scoreL2: number,
@@ -417,7 +417,7 @@ Heartbeat/estado de terminales conectadas. Un documento por terminal (doc.id = t
 
 ```typescript
 {
-  terminalId: string,                  // ej "keyon-pi-zero2w-01"
+  terminalId: string,                  // ej "keyon-pi4-01"
   dispositivo: string,
   estado: "online" | "offline",
   ultimoHeartbeat: Timestamp,          // server Google
@@ -725,7 +725,7 @@ sudo systemctl status keyon-terminal.service
 | Precisión | 98.5% | ~99% (benchmark LFW) |
 | Latencia | 1.2 s | ~3-5 s |
 | Costo hardware | ~$4,900 | ~$3,225 |
-| Consumo | ~50-100 W (PC) | ~2-5 W (Pi Zero 2W) |
+| Consumo | ~50-100 W (PC) | ~2-5 W (Pi 4) |
 | Autonomía | Requiere navegador + PC | 100% autónoma |
 | Boot time | ~120s (OS + browser) | ~90s (OS + systemd service) |
 

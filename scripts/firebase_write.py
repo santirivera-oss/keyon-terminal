@@ -30,8 +30,8 @@ asistencia = {
     "metodoVerificacion": "facial_local_terminal",
     "scoreCosine": 0.7260,
     "scoreL2": 0.7403,
-    "terminalId": "keyon-pi-zero2w-01",
-    "dispositivo": "Raspberry Pi Zero 2W",
+    "terminalId": "keyon-pi4-01",
+    "dispositivo": "Raspberry Pi 4 Model B",
     "procesadoEnDispositivo": True,
     "sincronizadoFirebase": True,
     "version": "2.0.0-dev"
